@@ -274,6 +274,48 @@ class SendTests(Fixture):
         writes = [t["name"] for t in tools if not t["annotations"]["readOnlyHint"]]
         self.assertEqual(writes, ["send_message"])
 
+    def send(self, chat="+15551230001"):
+        wait, server.SEND_WAIT = server.SEND_WAIT, 0
+        try:
+            return server.call_tool("send_message", {"chat": chat, "text": "hi"})
+        finally:
+            server.SEND_WAIT = wait
+
+    def test_always_allow_contact_skips_dialog(self):
+        self.configure(send="confirm", always_allow_send=["(555) 123-0001"])
+        self.send()
+        self.assertEqual(self.calls, [["hi", "iMessage;-;+15551230001", "chat"]])
+
+    def test_always_allow_is_per_contact(self):
+        self.configure(send="confirm", always_allow_send=["+15551230001"])
+        self.results = [(0, "Don't Send")]
+        with self.assertRaises(server.ToolError):
+            self.send("landlord@example.com")
+        self.assertEqual(len(self.calls), 1)
+
+    def test_always_allow_button_is_remembered(self):
+        self.configure(send="confirm", allowed_chats=[])
+        self.results = [(0, "Always Allow")]
+        self.send()
+        self.assertEqual(len(self.calls), 2)  # dialog, then the send
+        with open(self.cfg) as f:
+            saved = json.load(f)
+        self.assertEqual(saved["always_allow_send"], ["+15551230001"])
+        self.assertEqual(saved["send"], "confirm")
+        self.calls.clear()
+        self.send()
+        self.assertEqual(len(self.calls), 1)  # no dialog the second time
+
+    def test_always_allow_does_not_override_off_or_allowlist(self):
+        self.configure(send="off", always_allow_send=["+15551230001"])
+        with self.assertRaises(server.ToolError):
+            self.send()
+        self.configure(send="confirm", allowed_chats=["landlord@example.com"],
+                       always_allow_send=["+15551230001"])
+        with self.assertRaises(server.ToolError):
+            self.send()
+        self.assertEqual(self.calls, [])
+
     def test_automation_denied_stops_and_explains(self):
         self.results = [(1, "execution error: Not authorized to send Apple events to Messages. (-1743)")]
         with self.assertRaises(server.ToolError) as e:

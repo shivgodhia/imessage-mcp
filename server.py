@@ -50,6 +50,9 @@ DEFAULT_CONFIG = {
     # "off": never send.
     # Sends started from a shell always show the dialog.
     "send": "allow",
+    # Conversations that skip the dialog. Same kinds of entries as
+    # allowed_chats. Clicking "Always Allow" in the dialog adds one.
+    "always_allow_send": [],
 }
 
 
@@ -235,8 +238,11 @@ def chat_label(con, chat):
 
 def allowed(chat, cfg):
     allow = cfg.get("allowed_chats") or []
-    if not allow:
-        return True
+    return not allow or chat_in(chat, allow)
+
+
+def chat_in(chat, allow):
+    """Is this conversation named by one of these config entries?"""
     names = {str(a).strip().lower() for a in allow}
     keys = {norm(str(a)) for a in allow}
     if chat["id"].lower() in names:
@@ -259,6 +265,23 @@ def last_activity(con, ident):
         (ident,),
     ).fetchone()
     return row[0] or 0
+
+
+def remember_always_allow(entry):
+    """Add a conversation to always_allow_send, keeping the rest of the file."""
+    data = {}
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH) as f:
+            data = json.load(f)
+    entries = data.setdefault("always_allow_send", [])
+    if entry not in entries:
+        entries.append(entry)
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, CONFIG_PATH)
 
 
 def visible_chats(con, cfg):
@@ -541,7 +564,8 @@ CONFIRM_SCRIPT = """
 on run argv
     tell me to activate
     set theMessage to "Claude wants to send this to " & (item 2 of argv) & ":" & return & return & (item 1 of argv)
-    set theAnswer to display dialog theMessage with title "Send iMessage?" buttons {"Don't Send", "Send"} default button "Don't Send" giving up after 300
+    set theMessage to theMessage & return & return & "Always Allow sends this and lets Claude text this conversation without asking again."
+    set theAnswer to display dialog theMessage with title "Send iMessage?" buttons {"Don't Send", "Always Allow", "Send"} default button "Don't Send" giving up after 300
     if gave up of theAnswer then return "timeout"
     return button returned of theAnswer
 end run
@@ -596,13 +620,24 @@ def tool_send_message(args, force_confirm=False):
             )
         label = who(ref)
         attempts = [(ref, "imessage"), (ref, "sms")]
+    always = cfg.get("always_allow_send") or []
+    if chat:
+        preapproved = chat_in(chat, always)
+    else:
+        preapproved = norm(ref) in {norm(str(a)) for a in always}
     before = con.execute("select coalesce(max(ROWID), 0) from message").fetchone()[0]
     con.close()
 
-    if mode == "confirm" or force_confirm:
+    asked = (mode == "confirm" or force_confirm) and not preapproved
+    if asked:
         code, out = osascript(CONFIRM_SCRIPT, [text, label], 320)
-        if code != 0 or out != "Send":
+        if code != 0 or out not in ("Send", "Always Allow"):
             raise ToolError("Not sent: the confirmation dialog was declined (%s)." % out)
+        if out == "Always Allow":
+            remember_always_allow(chat["id"] if chat else ref)
+    note = ""
+    if preapproved and (mode == "confirm" or force_confirm):
+        note = " The user was not asked: this conversation is on their always-allow list."
 
     errors = []
     sent = False
@@ -655,7 +690,8 @@ def tool_send_message(args, force_confirm=False):
                 )
             if is_sent or delivered:
                 state = "delivered" if delivered else "sent"
-                return "Sent to %s via %s (message %d, %s)." % (label, service, rowid, state)
+                return "Sent to %s via %s (message %d, %s).%s" % (
+                    label, service, rowid, state, note)
     return (
         "Handed to Messages for %s, but it has not shown as sent yet. "
         "Check with read_chat before telling the user it was sent, and do not "

@@ -66,6 +66,10 @@ immediately:
     recipient, and sends only if you click Send. Claude cannot bypass this,
     and it holds even if the app is set to "always allow".
   - `"off"`: read-only.
+- `always_allow_send`: conversations that skip the dialog, so Claude can text
+  them without asking. Same kinds of entries as `allowed_chats`. Clicking
+  **Always Allow** in the dialog adds the conversation here; delete the entry
+  to go back to being asked.
 
 ## Who asks before a text goes out
 
@@ -75,6 +79,12 @@ before running a tool, showing the recipient and the exact text, and you
 approve or deny that one call. Each tool has its own setting in the app
 (always allow, ask every time, or blocked), so you can let the reading tools
 run freely and keep `send_message` on ask every time.
+
+The app's setting is per tool, not per person. For per-contact approval, set
+`"send": "confirm"` and put `send_message` on always allow in the app: the
+dialog then asks for everyone except the conversations in `always_allow_send`.
+The dialog appears on the Mac's screen, so this setup needs you at the Mac for
+anyone not on that list.
 
 Two things sit outside the app's prompt:
 
