@@ -249,6 +249,15 @@ def allowed(chat, cfg):
     return False
 
 
+def last_activity(con, ident):
+    row = con.execute(
+        "select max(j.message_date) from chat c "
+        "join chat_message_join j on j.chat_id = c.ROWID where c.chat_identifier = ?",
+        (ident,),
+    ).fetchone()
+    return row[0] or 0
+
+
 def visible_chats(con, cfg):
     return {k: c for k, c in all_chats(con).items() if allowed(c, cfg)}
 
@@ -273,6 +282,11 @@ def resolve_chat(con, cfg, ref):
         hits = [c for c, label in labels if label and low == label]
         if not hits:
             hits = [c for c, label in labels if label and low in label]
+    if len(hits) > 1 and not any(c["group"] for c in hits):
+        # Messages sometimes keeps a stray second identifier for one person
+        # ("tel:+1555..." next to "+1555..."). Same number: use the live thread.
+        if len({norm(c["id"]) for c in hits}) == 1:
+            hits = [max(hits, key=lambda c: last_activity(con, c["id"]))]
     if len(hits) == 1:
         return hits[0]
     if not hits:

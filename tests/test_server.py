@@ -153,6 +153,14 @@ class ReadTests(Fixture):
     def test_read_chat_by_group_name(self):
         self.assertIn("xxx", server.call_tool("read_chat", {"chat": "flat hunt"}))
 
+    def test_duplicate_identifier_for_same_number_picks_live_thread(self):
+        con = sqlite3.connect(self.db)
+        con.execute("insert into chat values (9, 'iMessage;-;tel:+15551230001', 45, 'tel:+15551230001', null)")
+        con.commit()
+        con.close()
+        out = server.call_tool("read_chat", {"chat": "555 123 0001"})
+        self.assertTrue(out.startswith("Conversation +15551230001 "))
+
     def test_unknown_chat(self):
         with self.assertRaises(server.ToolError):
             server.call_tool("read_chat", {"chat": "nobody"})
