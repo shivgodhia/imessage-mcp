@@ -1,5 +1,5 @@
 /*
- * imessage-mcp launcher.
+ * iMessage MCP launcher: the executable inside "iMessage MCP.app".
  *
  * The Claude app starts local MCP servers through a "disclaimer" helper, so
  * macOS does not treat Claude as responsible for them: privacy permissions
@@ -8,8 +8,8 @@
  * Python script on the Mac.
  *
  * This program is the executable instead. It starts Python as a child, which
- * keeps this binary as the responsible process, so the permission is granted
- * to "imessage-mcp" alone. PYTHON and SERVER are fixed at build time by
+ * keeps this app as the responsible process, so the permission is granted to
+ * "iMessage MCP" alone. PYTHON and SERVER are fixed at build time by
  * install.py so the binary cannot be pointed at anything else.
  */
 

@@ -1,30 +1,53 @@
 #!/usr/bin/env python3
-"""Install imessage-mcp into the Claude Mac app.
+"""Install iMessage MCP into the Claude Mac app.
 
-Copies server.py to ~/.local/share/imessage-mcp/ (so the app does not depend on
-this checkout), builds the small launcher that macOS grants permissions to,
-registers it under mcpServers in the Claude desktop config, and reports which
-macOS permissions are still missing.
+    python3 install.py              install or update
+    python3 install.py --no-open    same, without opening System Settings
+    python3 install.py --remove     uninstall
 
-    python3 install.py            install or update
-    python3 install.py --remove   unregister and delete the installed copy
+What it does:
+  1. Copies server.py to ~/.local/share/imessage-mcp/.
+  2. Builds "iMessage MCP.app", a tiny launcher that macOS grants permissions
+     to, and puts it in /Applications.
+  3. Registers it under mcpServers in the Claude desktop config (backed up).
+  4. Opens the Full Disk Access settings so you can switch it on.
 """
 
+import hashlib
 import json
 import os
+import plistlib
 import shutil
 import sqlite3
 import subprocess
 import sys
 import time
 
+VERSION = "0.2.0"
 HOME = os.path.expanduser("~")
 HERE = os.path.dirname(os.path.abspath(__file__))
-INSTALL_DIR = HOME + "/.local/share/imessage-mcp"
+DATA_DIR = HOME + "/.local/share/imessage-mcp"
+SERVER = DATA_DIR + "/server.py"
+STAMP = DATA_DIR + "/app.built-for"
+APP_NAME = "iMessage MCP"
+BUNDLE_ID = "com.shivgodhia.imessage-mcp"
+EXECUTABLE = "imessage-mcp"
 CLAUDE_CONFIG = HOME + "/Library/Application Support/Claude/claude_desktop_config.json"
 USER_CONFIG = HOME + "/.config/imessage-mcp/config.json"
-LAUNCHER = INSTALL_DIR + "/imessage-mcp"
+FDA_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
 NAME = "imessage"
+
+
+def app_path():
+    for base in ("/Applications", HOME + "/Applications"):
+        if os.path.isdir(os.path.join(base, APP_NAME + ".app")):
+            return os.path.join(base, APP_NAME + ".app")
+    base = "/Applications" if os.access("/Applications", os.W_OK) else HOME + "/Applications"
+    return os.path.join(base, APP_NAME + ".app")
+
+
+def launcher_path(app):
+    return os.path.join(app, "Contents", "MacOS", EXECUTABLE)
 
 
 def read_claude_config():
@@ -35,10 +58,11 @@ def read_claude_config():
 
 
 def write_claude_config(cfg):
+    os.makedirs(os.path.dirname(CLAUDE_CONFIG), exist_ok=True)
     if os.path.exists(CLAUDE_CONFIG):
         backup = CLAUDE_CONFIG + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
         shutil.copy2(CLAUDE_CONFIG, backup)
-        print("backed up Claude config to %s" % backup)
+        print("  backed up the Claude config to %s" % backup)
     tmp = CLAUDE_CONFIG + ".tmp"
     with open(tmp, "w") as f:
         json.dump(cfg, f, indent=2)
@@ -47,38 +71,93 @@ def write_claude_config(cfg):
     os.replace(tmp, CLAUDE_CONFIG)
 
 
-def build_launcher(python, server):
-    """Compile launcher.c with the Python and server paths fixed inside it.
+def source_fingerprint(python):
+    h = hashlib.sha256()
+    h.update(("%s\n%s\n%s\n" % (VERSION, python, SERVER)).encode())
+    for name in ("launcher.c", "app/AppIcon.icns"):
+        with open(os.path.join(HERE, name), "rb") as f:
+            h.update(f.read())
+    return h.hexdigest()
 
-    macOS ties the Full Disk Access grant to this exact binary, so it is only
-    rebuilt when it is missing or those paths change. Rebuilding means turning
-    the permission on again.
+
+def build_app(app, python):
+    """Build the app bundle. Returns True if it was (re)built.
+
+    macOS ties Full Disk Access to this exact build, so it is left alone
+    unless something it is made from has changed.
     """
-    stamp_path = LAUNCHER + ".built-for"
-    stamp = "%s\n%s\n" % (python, server)
-    if os.path.exists(LAUNCHER) and os.path.exists(stamp_path):
-        with open(stamp_path) as f:
-            if f.read() == stamp:
-                print("launcher already built: %s" % LAUNCHER)
-                return
-    cmd = [
-        "/usr/bin/cc", "-O2", "-Wall",
-        '-DPYTHON="%s"' % python, '-DSERVER="%s"' % server,
-        "-o", LAUNCHER, os.path.join(HERE, "launcher.c"),
-    ]
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    if p.returncode != 0:
+    fingerprint = source_fingerprint(python)
+    if os.path.exists(launcher_path(app)) and os.path.exists(STAMP):
+        with open(STAMP) as f:
+            if f.read().strip() == fingerprint:
+                return False
+
+    if not os.path.exists("/usr/bin/cc") or subprocess.run(
+        ["/usr/bin/xcode-select", "-p"], capture_output=True
+    ).returncode != 0:
         sys.exit(
-            "Could not build the launcher (needs the Xcode command line tools: "
-            "xcode-select --install).\n" + p.stderr
+            "The Xcode command line tools are needed to build the app.\n"
+            "Run:  xcode-select --install   then run this installer again."
         )
-    with open(stamp_path, "w") as f:
-        f.write(stamp)
-    print("built launcher %s" % LAUNCHER)
+
+    build = app + ".building"
+    shutil.rmtree(build, ignore_errors=True)
+    os.makedirs(os.path.join(build, "Contents", "MacOS"))
+    os.makedirs(os.path.join(build, "Contents", "Resources"))
+    shutil.copy2(
+        os.path.join(HERE, "app", "AppIcon.icns"),
+        os.path.join(build, "Contents", "Resources", "AppIcon.icns"),
+    )
+    info = {
+        "CFBundleIdentifier": BUNDLE_ID,
+        "CFBundleName": APP_NAME,
+        "CFBundleDisplayName": APP_NAME,
+        "CFBundleExecutable": EXECUTABLE,
+        "CFBundleIconFile": "AppIcon",
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": VERSION,
+        "CFBundleInfoDictionaryVersion": "6.0",
+        "LSMinimumSystemVersion": "12.0",
+        "LSUIElement": True,
+        "NSAppleEventsUsageDescription": (
+            "iMessage MCP sends the texts you approve through the Messages app."
+        ),
+        "NSHumanReadableCopyright": "MIT License",
+    }
+    with open(os.path.join(build, "Contents", "Info.plist"), "wb") as f:
+        plistlib.dump(info, f)
+
+    cc = subprocess.run(
+        [
+            "/usr/bin/cc", "-O2", "-Wall",
+            '-DPYTHON="%s"' % python, '-DSERVER="%s"' % SERVER,
+            "-o", launcher_path(build), os.path.join(HERE, "launcher.c"),
+        ],
+        capture_output=True, text=True,
+    )
+    if cc.returncode != 0:
+        shutil.rmtree(build, ignore_errors=True)
+        sys.exit("Could not build the launcher:\n" + cc.stderr)
+    sign = subprocess.run(
+        ["/usr/bin/codesign", "--force", "--sign", "-", build],
+        capture_output=True, text=True,
+    )
+    if sign.returncode != 0:
+        shutil.rmtree(build, ignore_errors=True)
+        sys.exit("Could not sign the app:\n" + sign.stderr)
+
+    shutil.rmtree(app, ignore_errors=True)
+    os.rename(build, app)
+    # Nudge Finder and System Settings to pick up the icon.
+    subprocess.run(["/usr/bin/touch", app])
+    with open(STAMP, "w") as f:
+        f.write(fingerprint + "\n")
+    return True
 
 
 def full_disk_access():
-    """True/False if we can tell whether the launcher has Full Disk Access."""
+    """True/False if we can tell whether the app has Full Disk Access."""
     try:
         con = sqlite3.connect(
             "file:/Library/Application Support/com.apple.TCC/TCC.db?mode=ro", uri=True
@@ -86,7 +165,7 @@ def full_disk_access():
         row = con.execute(
             "select auth_value from access where service = "
             "'kTCCServiceSystemPolicyAllFiles' and client = ?",
-            (LAUNCHER,),
+            (BUNDLE_ID,),
         ).fetchone()
         return bool(row and row[0] == 2)
     except sqlite3.Error:
@@ -100,55 +179,74 @@ def remove():
         if not cfg["mcpServers"]:
             del cfg["mcpServers"]
         write_claude_config(cfg)
-        print("removed %s from the Claude config" % NAME)
-    shutil.rmtree(INSTALL_DIR, ignore_errors=True)
-    print("deleted %s. Quit and reopen Claude to finish." % INSTALL_DIR)
+        print("Removed %s from the Claude config." % NAME)
+    app = app_path()
+    shutil.rmtree(app, ignore_errors=True)
+    shutil.rmtree(DATA_DIR, ignore_errors=True)
+    subprocess.run(
+        ["/usr/bin/tccutil", "reset", "All", BUNDLE_ID], capture_output=True
+    )
+    print("Deleted %s and %s." % (app, DATA_DIR))
+    print("Your settings in %s were kept." % USER_CONFIG)
+    print("Quit and reopen Claude to finish.")
 
 
-def install():
-    os.makedirs(INSTALL_DIR, exist_ok=True)
-    target = os.path.join(INSTALL_DIR, "server.py")
-    shutil.copy2(os.path.join(HERE, "server.py"), target)
-    print("installed %s" % target)
+def install(open_settings):
+    python = os.path.realpath(sys.executable)
+    app = app_path()
+    print("Installing %s %s" % (APP_NAME, VERSION))
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    shutil.copy2(os.path.join(HERE, "server.py"), SERVER)
+    print("  server:  %s" % SERVER)
+    for stale in ("imessage-mcp", "imessage-mcp.built-for"):  # pre-0.2 launcher
+        try:
+            os.remove(os.path.join(DATA_DIR, stale))
+        except FileNotFoundError:
+            pass
+
+    rebuilt = build_app(app, python)
+    print("  app:     %s%s" % (app, "" if rebuilt else " (unchanged)"))
 
     if not os.path.exists(USER_CONFIG):
         os.makedirs(os.path.dirname(USER_CONFIG), exist_ok=True)
         with open(USER_CONFIG, "w") as f:
-            json.dump({"allowed_chats": [], "send": "allow"}, f, indent=2)
+            json.dump(
+                {"allowed_chats": [], "send": "confirm", "always_allow_send": []},
+                f, indent=2,
+            )
             f.write("\n")
-        print("created %s" % USER_CONFIG)
+    print("  options: %s" % USER_CONFIG)
 
-    python = os.path.realpath(sys.executable)
-    build_launcher(python, target)
-    entry = {"command": LAUNCHER, "args": []}
+    entry = {"command": launcher_path(app), "args": []}
     cfg = read_claude_config()
-    if cfg.get("mcpServers", {}).get(NAME) == entry:
-        print("Claude config already has the %s server" % NAME)
-    else:
+    if cfg.get("mcpServers", {}).get(NAME) != entry:
         cfg.setdefault("mcpServers", {})[NAME] = entry
         write_claude_config(cfg)
-        print("registered the %s server in the Claude config" % NAME)
+    print("  Claude:  registered as \"%s\"" % NAME)
 
-    print()
-    subprocess.run([python, target, "check"])
-    print()
     fda = full_disk_access()
-    print("Still to do by hand:")
-    if fda:
-        print("  [done] imessage-mcp has Full Disk Access")
-    else:
-        print(
-            "  1. System Settings > Privacy & Security > Full Disk Access: turn "
-            "on imessage-mcp%s.\n     If it is not in the list, click +, press "
-            "Cmd+Shift+G and paste:\n     %s"
-            % ("" if fda is False else " (could not check)", LAUNCHER)
-        )
-    print("  2. Quit Claude completely (Cmd+Q) and reopen it")
-    print(
-        "  3. The first send shows a one-time prompt, 'imessage-mcp wants to "
-        "control Messages': click Allow"
-    )
+    print()
+    if fda and not rebuilt:
+        print("Full Disk Access is already on. Quit Claude (Cmd+Q) and reopen it.")
+        return
+    print("Two steps left:")
+    print("  1. In System Settings > Privacy & Security > Full Disk Access,")
+    print("     switch on \"%s\". If it is not in the list, drag it in from" % APP_NAME)
+    print("     the Finder window that just opened (or click + and pick it).")
+    print("  2. Quit Claude completely (Cmd+Q) and reopen it.")
+    print()
+    print("The first time Claude sends a text, macOS asks whether \"%s\"" % APP_NAME)
+    print("may control Messages. Click Allow.")
+    if open_settings:
+        subprocess.run(["/usr/bin/open", "-R", app])
+        subprocess.run(["/usr/bin/open", FDA_PANE])
 
 
 if __name__ == "__main__":
-    remove() if "--remove" in sys.argv else install()
+    if sys.platform != "darwin":
+        sys.exit("iMessage MCP only runs on macOS.")
+    if "--remove" in sys.argv:
+        remove()
+    else:
+        install(open_settings="--no-open" not in sys.argv)

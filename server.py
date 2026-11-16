@@ -23,7 +23,7 @@ import tempfile
 import time
 from datetime import datetime
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 HOME = os.path.expanduser("~")
 CHAT_DB = os.environ.get("IMESSAGE_DB", HOME + "/Library/Messages/chat.db")
 CONFIG_PATH = os.environ.get(
@@ -42,14 +42,14 @@ DEFAULT_CONFIG = {
     # listed, read, searched or sent to: phone numbers, emails, contact names,
     # group names or chat identifiers from list_chats.
     "allowed_chats": [],
-    # "allow": leave the asking to the MCP client, the way the Gmail connector
-    #          does: the Claude app shows the recipient and text and waits for
-    #          you to approve, unless you set that tool to "always allow".
-    # "confirm": also show a macOS dialog with the exact text and send only on
-    #          a click, whatever the client's setting is.
+    # "confirm": show a macOS dialog with the recipient and exact text, and
+    #          send only on a click.
+    # "allow": leave the asking to the MCP client, the way connectors like
+    #          Gmail work: the Claude app shows the call and waits for you,
+    #          unless you set that tool to "always allow".
     # "off": never send.
     # Sends started from a shell always show the dialog.
-    "send": "allow",
+    "send": "confirm",
     # Conversations that skip the dialog. Same kinds of entries as
     # allowed_chats. Clicking "Always Allow" in the dialog adds one.
     "always_allow_send": [],
@@ -101,9 +101,9 @@ def open_db(path):
     except sqlite3.Error as e:
         raise ToolError(
             "Cannot open %s (%s). macOS is blocking it. In System Settings > "
-            "Privacy & Security > Full Disk Access, turn on imessage-mcp, then "
+            "Privacy & Security > Full Disk Access, turn on iMessage MCP, then "
             "quit Claude with Cmd+Q and reopen it. Turning on Claude itself "
-            "does not help: the permission has to be on imessage-mcp."
+            "does not help: the permission has to be on iMessage MCP."
             % (path, e)
         )
 
@@ -667,7 +667,7 @@ def tool_send_message(args, force_confirm=False):
         if "-1743" in joined or "not authorized" in joined.lower():
             hint = (
                 " Allow it in System Settings > Privacy & Security > "
-                "Automation > imessage-mcp > Messages."
+                "Automation > iMessage MCP > Messages."
             )
         raise ToolError("Messages refused to send. %s%s" % (joined, hint))
 

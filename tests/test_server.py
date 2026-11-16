@@ -206,6 +206,7 @@ class AllowlistTests(Fixture):
 class SendTests(Fixture):
     def setUp(self):
         super().setUp()
+        self.configure(send="allow")
         self.calls = []
         self.results = []
         self.real = server.osascript
@@ -267,6 +268,13 @@ class SendTests(Fixture):
         self.results = [(0, "timeout")]
         with self.assertRaises(server.ToolError):
             server.call_tool("send_message", {"chat": "+15551230001", "text": "hi"})
+        self.assertEqual(len(self.calls), 1)
+
+    def test_asks_by_default_when_there_is_no_config(self):
+        os.remove(self.cfg)
+        self.results = [(0, "Don't Send")]
+        with self.assertRaises(server.ToolError):
+            self.send()
         self.assertEqual(len(self.calls), 1)
 
     def test_send_is_the_only_write_tool(self):
