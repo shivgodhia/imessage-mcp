@@ -42,10 +42,13 @@ DEFAULT_CONFIG = {
     # listed, read, searched or sent to: phone numbers, emails, contact names,
     # group names or chat identifiers from list_chats.
     "allowed_chats": [],
-    # "allow": send when the tool is called (the Claude app still asks you to
-    #          approve the tool call unless you chose "always allow").
-    # "confirm": show a macOS dialog with the exact text, send only on click.
+    # "allow": leave the asking to the MCP client, the way the Gmail connector
+    #          does: the Claude app shows the recipient and text and waits for
+    #          you to approve, unless you set that tool to "always allow".
+    # "confirm": also show a macOS dialog with the exact text and send only on
+    #          a click, whatever the client's setting is.
     # "off": never send.
+    # Sends started from a shell always show the dialog.
     "send": "allow",
 }
 
@@ -536,6 +539,7 @@ end run
 
 CONFIRM_SCRIPT = """
 on run argv
+    tell me to activate
     set theMessage to "Claude wants to send this to " & (item 2 of argv) & ":" & return & return & (item 1 of argv)
     set theAnswer to display dialog theMessage with title "Send iMessage?" buttons {"Don't Send", "Send"} default button "Don't Send" giving up after 300
     if gave up of theAnswer then return "timeout"
@@ -555,7 +559,7 @@ def osascript(script, argv, timeout):
     return p.returncode, (p.stdout if p.returncode == 0 else p.stderr).strip()
 
 
-def tool_send_message(args):
+def tool_send_message(args, force_confirm=False):
     cfg = load_config()
     mode = cfg.get("send", "allow")
     if mode == "off":
@@ -595,7 +599,7 @@ def tool_send_message(args):
     before = con.execute("select coalesce(max(ROWID), 0) from message").fetchone()[0]
     con.close()
 
-    if mode == "confirm":
+    if mode == "confirm" or force_confirm:
         code, out = osascript(CONFIRM_SCRIPT, [text, label], 320)
         if code != 0 or out != "Send":
             raise ToolError("Not sent: the confirmation dialog was declined (%s)." % out)
@@ -705,6 +709,7 @@ CHAT_ARG = (
 TOOLS = [
     {
         "name": "list_chats",
+        "title": "List conversations",
         "description": "List iMessage/SMS conversations on this Mac, most recent first, "
         "with contact names, unread counts and the last message. Start here to "
         "find a conversation's identifier.",
@@ -721,6 +726,7 @@ TOOLS = [
     },
     {
         "name": "read_chat",
+        "title": "Read a conversation",
         "description": "Read messages from one conversation, oldest first. Each line starts "
         "with the message id in brackets. Page back with before_id, or pass "
         "after_id to get only what is newer than a message you already saw.",
@@ -739,6 +745,7 @@ TOOLS = [
     },
     {
         "name": "search_messages",
+        "title": "Search messages",
         "description": "Case-insensitive text search across messages, newest matches first.",
         "inputSchema": {
             "type": "object",
@@ -755,6 +762,7 @@ TOOLS = [
     },
     {
         "name": "new_messages",
+        "title": "Check for new messages",
         "description": "Incoming messages across all conversations since a cursor. The result "
         "ends with a cursor: pass it as after_id on the next call to get only "
         "what arrived in between. Without after_id, returns the last since_minutes.",
@@ -772,6 +780,7 @@ TOOLS = [
     },
     {
         "name": "send_message",
+        "title": "Send a text message",
         "description": "Send a text as the user through the Messages app. The recipient sees "
         "it as coming from the user, and it cannot be recalled. Unless the user "
         "has told you to send without asking, show them the exact text and "
@@ -790,6 +799,7 @@ TOOLS = [
     },
     {
         "name": "get_attachment",
+        "title": "Get an attachment",
         "description": "Fetch an attachment by the id shown in a message line. Images are "
         "returned as a picture; other files return their path and type.",
         "inputSchema": {
@@ -813,10 +823,17 @@ INSTRUCTIONS = (
 )
 
 
-def call_tool(name, args):
+def call_tool(name, args, from_shell=False):
+    """from_shell: run from the command line rather than by an MCP client.
+
+    An MCP client (the Claude app) asks the user to approve a send before it
+    calls the tool. A shell has no such prompt, so a send from there always
+    goes through the on-screen confirmation dialog."""
     tool = TOOLS_BY_NAME.get(name)
     if not tool:
         raise ToolError("Unknown tool %r" % name)
+    if from_shell and not tool["read_only"]:
+        return tool["fn"](args or {}, force_confirm=True)
     return tool["fn"](args or {})
 
 
@@ -840,10 +857,15 @@ def handle(msg):
             "tools": [
                 {
                     "name": t["name"],
+                    "title": t["title"],
                     "description": t["description"],
                     "inputSchema": t["inputSchema"],
+                    # Clients sort tools into "read-only" and "write" groups
+                    # from these hints and ask before running the write ones.
                     "annotations": {
+                        "title": t["title"],
                         "readOnlyHint": t["read_only"],
+                        "idempotentHint": t["read_only"],
                         "destructiveHint": False,
                         "openWorldHint": not t["read_only"],
                     },
@@ -907,7 +929,7 @@ def main(argv):
         return check()
     if len(argv) > 2 and argv[1] == "call":
         try:
-            out = call_tool(argv[2], json.loads(argv[3]) if len(argv) > 3 else {})
+            out = call_tool(argv[2], json.loads(argv[3]) if len(argv) > 3 else {}, from_shell=True)
         except ToolError as e:
             print("error: %s" % e, file=sys.stderr)
             return 1

@@ -254,6 +254,26 @@ class SendTests(Fixture):
             server.call_tool("send_message", {"chat": "+15551230001", "text": "hi"})
         self.assertEqual(len(self.calls), 1)
 
+    def test_shell_send_always_asks_even_in_allow_mode(self):
+        self.results = [(0, "Don't Send")]
+        with self.assertRaises(server.ToolError):
+            server.call_tool("send_message", {"chat": "+15551230001", "text": "hi"}, from_shell=True)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls[0][0], "hi")
+        self.assertIn("+15551230001", self.calls[0][1])
+
+    def test_dialog_timeout_does_not_send(self):
+        self.configure(send="confirm")
+        self.results = [(0, "timeout")]
+        with self.assertRaises(server.ToolError):
+            server.call_tool("send_message", {"chat": "+15551230001", "text": "hi"})
+        self.assertEqual(len(self.calls), 1)
+
+    def test_send_is_the_only_write_tool(self):
+        tools = server.handle({"method": "tools/list"})["tools"]
+        writes = [t["name"] for t in tools if not t["annotations"]["readOnlyHint"]]
+        self.assertEqual(writes, ["send_message"])
+
     def test_automation_denied_stops_and_explains(self):
         self.results = [(1, "execution error: Not authorized to send Apple events to Messages. (-1743)")]
         with self.assertRaises(server.ToolError) as e:

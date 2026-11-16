@@ -61,11 +61,27 @@ immediately:
   read, searched or sent to. Entries are phone numbers (any format), emails,
   contact names, group names or chat identifiers. Empty means everything.
 - `send`:
-  - `"allow"` (default): sends when the tool is called. The Claude app still
-    asks you to approve each call unless you pick "always allow".
-  - `"confirm"`: pops up a macOS dialog showing the exact text and recipient,
-    and sends only if you click Send. Claude cannot bypass this.
+  - `"allow"` (default): asking is left to the Claude app, as described below.
+  - `"confirm"`: also pops up a macOS dialog showing the exact text and
+    recipient, and sends only if you click Send. Claude cannot bypass this,
+    and it holds even if the app is set to "always allow".
   - `"off"`: read-only.
+
+## Who asks before a text goes out
+
+The same way the Gmail connector works. The server marks the five reading
+tools as read-only and `send_message` as a write tool. The Claude app asks
+before running a tool, showing the recipient and the exact text, and you
+approve or deny that one call. Each tool has its own setting in the app
+(always allow, ask every time, or blocked), so you can let the reading tools
+run freely and keep `send_message` on ask every time.
+
+Two things sit outside the app's prompt:
+
+- If you set `send_message` to always allow in the app, texts go out without
+  asking. Use `"send": "confirm"` if you want a gate that setting cannot remove.
+- Running `server.py call send_message` from a shell has no app in front of it,
+  so it always shows the macOS dialog, in every mode except `"off"`.
 
 Texts from other people are untrusted input. The server labels them as such in
 every result, but an allowlist plus `"send": "confirm"` is the real protection
