@@ -100,9 +100,11 @@ def open_db(path):
         return con
     except sqlite3.Error as e:
         raise ToolError(
-            "Cannot open %s (%s). The app running this server needs Full Disk "
-            "Access: System Settings > Privacy & Security > Full Disk Access, "
-            "turn on Claude, then quit and reopen it." % (path, e)
+            "Cannot open %s (%s). macOS is blocking it. In System Settings > "
+            "Privacy & Security > Full Disk Access, turn on imessage-mcp, then "
+            "quit Claude with Cmd+Q and reopen it. Turning on Claude itself "
+            "does not help: the permission has to be on imessage-mcp."
+            % (path, e)
         )
 
 
@@ -665,7 +667,7 @@ def tool_send_message(args, force_confirm=False):
         if "-1743" in joined or "not authorized" in joined.lower():
             hint = (
                 " Allow it in System Settings > Privacy & Security > "
-                "Automation > Claude > Messages."
+                "Automation > imessage-mcp > Messages."
             )
         raise ToolError("Messages refused to send. %s%s" % (joined, hint))
 

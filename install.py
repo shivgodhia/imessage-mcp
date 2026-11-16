@@ -2,8 +2,9 @@
 """Install imessage-mcp into the Claude Mac app.
 
 Copies server.py to ~/.local/share/imessage-mcp/ (so the app does not depend on
-this checkout), registers it under mcpServers in the Claude desktop config, and
-reports which macOS permissions are still missing.
+this checkout), builds the small launcher that macOS grants permissions to,
+registers it under mcpServers in the Claude desktop config, and reports which
+macOS permissions are still missing.
 
     python3 install.py            install or update
     python3 install.py --remove   unregister and delete the installed copy
@@ -22,7 +23,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 INSTALL_DIR = HOME + "/.local/share/imessage-mcp"
 CLAUDE_CONFIG = HOME + "/Library/Application Support/Claude/claude_desktop_config.json"
 USER_CONFIG = HOME + "/.config/imessage-mcp/config.json"
-CLAUDE_BUNDLE_ID = "com.anthropic.claudefordesktop"
+LAUNCHER = INSTALL_DIR + "/imessage-mcp"
 NAME = "imessage"
 
 
@@ -46,8 +47,38 @@ def write_claude_config(cfg):
     os.replace(tmp, CLAUDE_CONFIG)
 
 
+def build_launcher(python, server):
+    """Compile launcher.c with the Python and server paths fixed inside it.
+
+    macOS ties the Full Disk Access grant to this exact binary, so it is only
+    rebuilt when it is missing or those paths change. Rebuilding means turning
+    the permission on again.
+    """
+    stamp_path = LAUNCHER + ".built-for"
+    stamp = "%s\n%s\n" % (python, server)
+    if os.path.exists(LAUNCHER) and os.path.exists(stamp_path):
+        with open(stamp_path) as f:
+            if f.read() == stamp:
+                print("launcher already built: %s" % LAUNCHER)
+                return
+    cmd = [
+        "/usr/bin/cc", "-O2", "-Wall",
+        '-DPYTHON="%s"' % python, '-DSERVER="%s"' % server,
+        "-o", LAUNCHER, os.path.join(HERE, "launcher.c"),
+    ]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    if p.returncode != 0:
+        sys.exit(
+            "Could not build the launcher (needs the Xcode command line tools: "
+            "xcode-select --install).\n" + p.stderr
+        )
+    with open(stamp_path, "w") as f:
+        f.write(stamp)
+    print("built launcher %s" % LAUNCHER)
+
+
 def full_disk_access():
-    """True/False if we can tell whether Claude.app has Full Disk Access."""
+    """True/False if we can tell whether the launcher has Full Disk Access."""
     try:
         con = sqlite3.connect(
             "file:/Library/Application Support/com.apple.TCC/TCC.db?mode=ro", uri=True
@@ -55,7 +86,7 @@ def full_disk_access():
         row = con.execute(
             "select auth_value from access where service = "
             "'kTCCServiceSystemPolicyAllFiles' and client = ?",
-            (CLAUDE_BUNDLE_ID,),
+            (LAUNCHER,),
         ).fetchone()
         return bool(row and row[0] == 2)
     except sqlite3.Error:
@@ -88,7 +119,8 @@ def install():
         print("created %s" % USER_CONFIG)
 
     python = os.path.realpath(sys.executable)
-    entry = {"command": python, "args": [target]}
+    build_launcher(python, target)
+    entry = {"command": LAUNCHER, "args": []}
     cfg = read_claude_config()
     if cfg.get("mcpServers", {}).get(NAME) == entry:
         print("Claude config already has the %s server" % NAME)
@@ -103,16 +135,18 @@ def install():
     fda = full_disk_access()
     print("Still to do by hand:")
     if fda:
-        print("  [done] Claude has Full Disk Access")
+        print("  [done] imessage-mcp has Full Disk Access")
     else:
         print(
-            "  1. System Settings > Privacy & Security > Full Disk Access: add "
-            "and turn on Claude%s" % ("" if fda is False else " (could not check)")
+            "  1. System Settings > Privacy & Security > Full Disk Access: turn "
+            "on imessage-mcp%s.\n     If it is not in the list, click +, press "
+            "Cmd+Shift+G and paste:\n     %s"
+            % ("" if fda is False else " (could not check)", LAUNCHER)
         )
     print("  2. Quit Claude completely (Cmd+Q) and reopen it")
     print(
-        "  3. The first send shows a one-time prompt, 'Claude wants to control "
-        "Messages': click Allow"
+        "  3. The first send shows a one-time prompt, 'imessage-mcp wants to "
+        "control Messages': click Allow"
     )
 
 

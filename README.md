@@ -14,19 +14,30 @@ screenshots or driving the Messages window.
 python3 install.py
 ```
 
-This copies `server.py` to `~/.local/share/imessage-mcp/`, adds an `imessage`
+This copies `server.py` to `~/.local/share/imessage-mcp/`, builds a small
+launcher next to it (needs the Xcode command line tools), adds an `imessage`
 entry under `mcpServers` in
 `~/Library/Application Support/Claude/claude_desktop_config.json` (after backing
 the file up), and creates `~/.config/imessage-mcp/config.json`.
 
 Then, by hand:
 
-1. **System Settings > Privacy & Security > Full Disk Access**: add Claude and
-   turn it on. macOS will not let anything read the Messages database without
-   it. This gives the Claude app, not just this server, access to protected
-   files.
+1. **System Settings > Privacy & Security > Full Disk Access**: turn on
+   **imessage-mcp**. If it is not listed, click +, press Cmd+Shift+G and paste
+   `~/.local/share/imessage-mcp/imessage-mcp`.
 2. Quit Claude (Cmd+Q) and reopen it.
-3. The first send shows "Claude wants to control Messages". Click Allow.
+3. The first send shows "imessage-mcp wants to control Messages". Click Allow.
+
+### Why a launcher, and why not just give Claude the permission
+
+The Claude app starts local servers through a helper that tells macOS Claude is
+not responsible for them. macOS then checks the server's own executable, so
+Full Disk Access on Claude does nothing. Granting it to `python3` would work
+but would cover every Python script on the Mac. `launcher.c` compiles to a
+binary that only ever runs this server, so the permission is that narrow.
+
+macOS ties the grant to the exact binary. The installer rebuilds it only when
+it is missing or Python moves; after a rebuild, turn the permission on again.
 
 Re-run `python3 install.py` after changing `server.py`. `python3 install.py
 --remove` undoes the install.
