@@ -69,7 +69,7 @@ gradient(0xFFFFFF, 0xE8F0FA, from: 796, to: 262)
 ctx.restoreGState()
 
 // The modification: sparkles inside the bubble, for the assistant.
-for (c, o, i) in [(CGPoint(x: 476, y: 548), CGFloat(150), CGFloat(44)),
+for (c, o, i) in [(CGPoint(x: 486, y: 552), CGFloat(112), CGFloat(33)),
                   (CGPoint(x: 654, y: 664), CGFloat(62), CGFloat(19)),
                   (CGPoint(x: 660, y: 452), CGFloat(40), CGFloat(12))] {
     let s = sparkle(at: c, outer: o, inner: i)
