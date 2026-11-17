@@ -68,21 +68,41 @@ ctx.clip()
 gradient(0xFFFFFF, 0xE8F0FA, from: 796, to: 262)
 ctx.restoreGState()
 
-// The modification: sparkles inside the bubble, for the assistant.
+// The modification: sparkles pressed into the bubble, for the assistant. Dark grey, with a
+// light rim below (the bubble catching light) and an inner shadow along the top edge.
 for (c, o, i) in [(CGPoint(x: 486, y: 552), CGFloat(112), CGFloat(33)),
                   (CGPoint(x: 654, y: 664), CGFloat(62), CGFloat(19)),
                   (CGPoint(x: 660, y: 452), CGFloat(40), CGFloat(12))] {
     let s = sparkle(at: c, outer: o, inner: i)
+    // Soften the points, and merge into one outline so the even-odd fill below works.
+    let rounded = s.union(s.copy(strokingWithWidth: 10, lineCap: .round, lineJoin: .round,
+                                 miterLimit: 10))
+    func shape() { ctx.addPath(rounded) }
+
+    // Highlight rim: a white copy nudged down, peeking out under the recess.
     ctx.saveGState()
-    ctx.addPath(s)
-    ctx.clip()
-    gradient(0xFF9B4A, 0xFF6A2B, from: c.y + o, to: c.y - o)
+    ctx.translateBy(x: 0, y: -4)
+    shape()
+    ctx.setFillColor(color(0xFFFFFF))
+    ctx.fillPath()
     ctx.restoreGState()
-    ctx.addPath(s)
-    ctx.setStrokeColor(color(0xFF7A33))
-    ctx.setLineWidth(10)
-    ctx.setLineJoin(.round)
-    ctx.strokePath()
+
+    // Recess fill: dark grey, slightly darker at the top where the light doesn't reach.
+    ctx.saveGState()
+    shape()
+    ctx.clip()
+    gradient(0x3A3D42, 0x5A5E64, from: c.y + o, to: c.y - o)
+
+    // Inner shadow: fill everything outside the sparkle with a shadow cast downward,
+    // clipped to the sparkle, so a dark band hugs its upper edges.
+    let outside = CGMutablePath()
+    outside.addRect(CGRect(x: c.x - o * 3, y: c.y - o * 3, width: o * 6, height: o * 6))
+    outside.addPath(rounded)
+    ctx.setShadow(offset: CGSize(width: 0, height: -5), blur: 8, color: color(0x000000, 0.75))
+    ctx.addPath(outside)
+    ctx.setFillColor(color(0x000000))
+    ctx.fillPath(using: .evenOdd)
+    ctx.restoreGState()
 }
 
 let rep = NSBitmapImageRep(cgImage: ctx.makeImage()!)
