@@ -6,6 +6,10 @@
 
 <p align="center">Let Claude read and answer your texts, entirely on your Mac.</p>
 
+<p align="center">
+  <a href="https://github.com/shivgodhia/imessage-mcp/releases/latest/download/iMessage-MCP.dmg"><b>Download for Mac</b></a>
+</p>
+
 iMessage MCP is a local [MCP](https://modelcontextprotocol.io) server for the
 Claude Mac app. Claude can list your conversations, read a thread, search,
 check for new messages and send a reply, and it asks you before any text goes
@@ -13,31 +17,32 @@ out.
 
 - **Local.** It reads the Messages database on your Mac and sends through the
   Messages app. It makes no network calls and has no server, account or API key.
-- **Small.** One Python file using only the standard library, plus a short C
-  launcher. Short enough to read before you trust it with your messages.
 - **Asks first.** Every send shows you the recipient and the exact text. You
   can let specific people through without asking, one contact at a time.
+- **Small.** One signed, notarized app of about 1.5 MB, with no dependencies.
+  The source is about 1,500 lines of Swift.
 
 ## Install
+
+1. [Download iMessage MCP](https://github.com/shivgodhia/imessage-mcp/releases/latest/download/iMessage-MCP.dmg),
+   open the disk image and drag the app into Applications.
+2. Open **iMessage MCP** from Applications. It connects itself to the Claude
+   app and tells you what is left.
+3. In **System Settings > Privacy & Security > Full Disk Access**, switch on
+   **iMessage MCP**. macOS will not let anything read your messages without this.
+4. Quit Claude with Cmd+Q and reopen it.
+
+Or do steps 1 and 2 from a terminal:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/shivgodhia/imessage-mcp/main/install.sh | sh
 ```
 
-Or clone the repo and run `python3 install.py`. Both need the Claude Mac app
-and the Xcode command line tools (`xcode-select --install`).
-
-The installer puts **iMessage MCP** in your Applications folder, registers it
-with the Claude app, and opens System Settings. Then:
-
-1. In **Privacy & Security > Full Disk Access**, switch on **iMessage MCP**.
-   macOS will not let anything read your messages without this.
-2. Quit Claude with Cmd+Q and reopen it.
-
 Ask Claude "what texts did I get today?" to try it. The first time Claude sends
 a text, macOS asks whether iMessage MCP may control Messages. Click Allow.
 
-To uninstall: `python3 install.py --remove`.
+Needs macOS 12 or later and the [Claude Mac app](https://claude.ai/download).
+Updating is the same as installing; your permissions carry over.
 
 ## What Claude can do
 
@@ -106,37 +111,38 @@ If you let Claude work through threads with strangers, keep `send` on
 `"confirm"` and consider listing only those threads in `allowed_chats`.
 
 Full Disk Access is broad: it lets iMessage MCP read any file your account
-can. The app only ever runs the `server.py` this repo installs, and that file
-only opens the Messages and Contacts databases.
+can. The app only opens the Messages database, your Contacts databases (for
+names), and attachments you ask for. It opens them read-only and never
+connects to the network; the source is here to check.
+
+The dialog protects against Claude in the Claude app. It is not a barrier
+against other software running as you, which could edit the options file.
 
 ## How it works
 
 ```
-Claude app  ──stdin/stdout──▶  iMessage MCP.app  ──▶  python3 server.py
-                                                         ├─ reads ~/Library/Messages/chat.db (read-only)
-                                                         ├─ reads Contacts for names
-                                                         └─ sends via AppleScript to Messages
+Claude app  ──stdin/stdout──▶  iMessage MCP.app
+                                 ├─ reads ~/Library/Messages/chat.db (read-only)
+                                 ├─ reads Contacts for names
+                                 └─ sends via AppleScript to Messages
 ```
 
 Unlike a hosted connector, there is nothing on the internet here. The Claude
-app starts the server as a child process when it opens and talks to it over a
-pipe. It is registered in a config file on your Mac, so it works in the Claude
-app on this Mac only, not on claude.ai or your phone.
+app starts iMessage MCP as a child process when it opens and talks to it over a
+pipe. It is registered in a config file on your Mac
+(`~/Library/Application Support/Claude/claude_desktop_config.json`), so it
+works in the Claude app on this Mac only, not on claude.ai or your phone.
 
-**Why there is an app at all.** The Claude app tells macOS it is not
+**Why it is an app and not a script.** The Claude app tells macOS it is not
 responsible for the servers it starts, so macOS checks the server's own
-executable for permissions. Giving Full Disk Access to `python3` would cover
-every Python script on your Mac. `launcher.c` compiles to a small app that
-only ever runs this server, so the permission is that narrow, and it shows up
-in System Settings with a name and an icon.
+executable for permissions. A script would mean giving Full Disk Access to
+`python3` or `node`, which covers every script on your Mac. A dedicated app
+keeps the permission that narrow, and it shows up in System Settings with a
+name and an icon.
 
-macOS ties the permission to the exact build of the app. The installer
-rebuilds it only when the launcher or your Python changes; after a rebuild,
-switch Full Disk Access on again. Updating `server.py` does not need a rebuild.
-
-**Why the server decodes blobs.** Recent macOS versions leave the `text`
-column empty for most messages and keep the text in a binary `attributedBody`
-field. `decode_body` in `server.py` pulls it out.
+**Why it decodes blobs.** Recent macOS versions leave the `text` column empty
+for most messages and keep the text in a binary `attributedBody` field.
+`decodeBody` in `Server.swift` pulls it out.
 
 ## Use it from a shell or Claude Code
 
@@ -156,13 +162,28 @@ claude mcp add --scope user imessage -- "/Applications/iMessage MCP.app/Contents
 From a terminal, macOS checks the terminal app's permissions rather than
 iMessage MCP's, so the terminal needs Full Disk Access too.
 
-## Development
+## Uninstall
 
 ```sh
-python3 -m unittest discover -s tests   # runs against a throwaway database
-python3 install.py                      # reinstall after editing
-swift app/make_icon.swift app/icon.png && sh app/make_icns.sh   # redraw the icon
+"/Applications/iMessage MCP.app/Contents/MacOS/imessage-mcp" uninstall
 ```
+
+Then move the app to the Trash. Your options file is left in place.
+
+## Build from source
+
+Needs Xcode or the Swift toolchain.
+
+```sh
+swift test                    # runs against a throwaway database
+scripts/build.sh --install    # build, copy to /Applications, connect to Claude
+```
+
+Without a Developer ID certificate the build is signed ad hoc, which works for
+your own Mac; macOS will ask for Full Disk Access again after each rebuild.
+`scripts/build.sh --release` builds, notarizes and publishes a release.
+
+The icon is drawn by `app/make_icon.swift`.
 
 ## License
 
