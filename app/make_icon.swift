@@ -31,19 +31,19 @@ func sparkle(at c: CGPoint, outer: CGFloat, inner: CGFloat) -> CGPath {
     return p
 }
 
-// Tile: the standard macOS rounded square in message green, soft shadow under it.
+// Tile: the standard macOS rounded square in iMessage blue, soft shadow under it.
 let tileRect = CGRect(x: 100, y: 100, width: 824, height: 824)
 let tile = CGPath(roundedRect: tileRect, cornerWidth: 186, cornerHeight: 186, transform: nil)
 ctx.saveGState()
 ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: color(0x000000, 0.28))
 ctx.addPath(tile)
-ctx.setFillColor(color(0x2FCB63))
+ctx.setFillColor(color(0x0A84FF))
 ctx.fillPath()
 ctx.restoreGState()
 ctx.saveGState()
 ctx.addPath(tile)
 ctx.clip()
-gradient(0x6DEB8C, 0x14B257, from: 924, to: 100)
+gradient(0x5AB8FF, 0x0062E0, from: 924, to: 100)
 ctx.restoreGState()
 
 // White speech bubble: an oval with a tail at the lower left.
@@ -55,7 +55,7 @@ tail.addQuadCurve(to: CGPoint(x: 232, y: 262), control: CGPoint(x: 306, y: 318))
 tail.addQuadCurve(to: CGPoint(x: 450, y: 330), control: CGPoint(x: 352, y: 270))
 tail.closeSubpath()
 ctx.saveGState()
-ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 26, color: color(0x06602A, 0.30))
+ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 26, color: color(0x00306E, 0.30))
 ctx.addPath(bubble)
 ctx.addPath(tail)
 ctx.setFillColor(color(0xFFFFFF))
@@ -65,7 +65,7 @@ ctx.saveGState()
 ctx.addPath(bubble)
 ctx.addPath(tail)
 ctx.clip()
-gradient(0xFFFFFF, 0xE9F3EC, from: 796, to: 262)
+gradient(0xFFFFFF, 0xE8F0FA, from: 796, to: 262)
 ctx.restoreGState()
 
 // The modification: sparkles inside the bubble, for the assistant.
