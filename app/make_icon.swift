@@ -68,7 +68,7 @@ ctx.clip()
 gradient(0xFFFFFF, 0xE8F0FA, from: 796, to: 262)
 ctx.restoreGState()
 
-// The modification: sparkles pressed into the bubble, for the assistant. Dark grey, with a
+// The modification: sparkles pressed into the bubble, for the assistant. Mid grey, with a
 // light rim below (the bubble catching light) and an inner shadow along the top edge.
 for (c, o, i) in [(CGPoint(x: 486, y: 552), CGFloat(112), CGFloat(33)),
                   (CGPoint(x: 654, y: 664), CGFloat(62), CGFloat(19)),
@@ -91,14 +91,14 @@ for (c, o, i) in [(CGPoint(x: 486, y: 552), CGFloat(112), CGFloat(33)),
     ctx.saveGState()
     shape()
     ctx.clip()
-    gradient(0x3A3D42, 0x5A5E64, from: c.y + o, to: c.y - o)
+    gradient(0x8A8E95, 0xA9ADB3, from: c.y + o, to: c.y - o)
 
     // Inner shadow: fill everything outside the sparkle with a shadow cast downward,
     // clipped to the sparkle, so a dark band hugs its upper edges.
     let outside = CGMutablePath()
     outside.addRect(CGRect(x: c.x - o * 3, y: c.y - o * 3, width: o * 6, height: o * 6))
     outside.addPath(rounded)
-    ctx.setShadow(offset: CGSize(width: 0, height: -5), blur: 8, color: color(0x000000, 0.75))
+    ctx.setShadow(offset: CGSize(width: 0, height: -5), blur: 8, color: color(0x000000, 0.45))
     ctx.addPath(outside)
     ctx.setFillColor(color(0x000000))
     ctx.fillPath(using: .evenOdd)
