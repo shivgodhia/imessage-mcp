@@ -1,2 +1,5 @@
-__pycache__/
-*.pyc
+.build/
+build/
+.swiftpm/
+*.dmg
+.DS_Store
