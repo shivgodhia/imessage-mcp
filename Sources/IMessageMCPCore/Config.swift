@@ -1,6 +1,6 @@
 import Foundation
 
-public let version = "1.0.0"
+public let version = "1.0.1"
 public let bundleIdentifier = "com.shivgodhia.imessage-mcp"
 
 /// Something the caller did wrong or that the Mac refused. Shown to Claude as the tool's error.
