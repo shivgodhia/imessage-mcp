@@ -19,13 +19,19 @@ func gradient(_ top: UInt32, _ bottom: UInt32, from: CGFloat, to: CGFloat) {
     ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: from), end: CGPoint(x: 0, y: to), options: [])
 }
 
+// A four-point star with concave, curved sides, like the ✨ emoji. `inner` sets how far the
+// curves bow in toward the centre: smaller is a thinner, spikier star.
 func sparkle(at c: CGPoint, outer: CGFloat, inner: CGFloat) -> CGPath {
     let p = CGMutablePath()
-    for i in 0..<8 {
-        let r = i % 2 == 0 ? outer : inner
-        let a = CGFloat(i) * .pi / 4 + .pi / 2
-        let pt = CGPoint(x: c.x + r * cos(a), y: c.y + r * sin(a))
-        if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+    let tips = (0..<4).map { i -> CGPoint in
+        let a = CGFloat(i) * .pi / 2 + .pi / 2
+        return CGPoint(x: c.x + outer * cos(a), y: c.y + outer * sin(a))
+    }
+    p.move(to: tips[0])
+    for i in 0..<4 {
+        let a = CGFloat(i) * .pi / 2 + .pi / 2 + .pi / 4
+        let ctrl = CGPoint(x: c.x + inner * cos(a), y: c.y + inner * sin(a))
+        p.addQuadCurve(to: tips[(i + 1) % 4], control: ctrl)
     }
     p.closeSubpath()
     return p
@@ -46,63 +52,42 @@ ctx.clip()
 gradient(0x5AB8FF, 0x0062E0, from: 924, to: 100)
 ctx.restoreGState()
 
-// White speech bubble: an oval with a tail at the lower left.
-let bubble = CGMutablePath()
-bubble.addEllipse(in: CGRect(x: 212, y: 318, width: 600, height: 478))
-let tail = CGMutablePath()
-tail.move(to: CGPoint(x: 300, y: 430))
-tail.addQuadCurve(to: CGPoint(x: 232, y: 262), control: CGPoint(x: 306, y: 318))
-tail.addQuadCurve(to: CGPoint(x: 450, y: 330), control: CGPoint(x: 352, y: 270))
-tail.closeSubpath()
-ctx.saveGState()
-ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 26, color: color(0x00306E, 0.30))
-ctx.addPath(bubble)
-ctx.addPath(tail)
-ctx.setFillColor(color(0xFFFFFF))
-ctx.fillPath()
-ctx.restoreGState()
-ctx.saveGState()
-ctx.addPath(bubble)
-ctx.addPath(tail)
-ctx.clip()
-gradient(0xFFFFFF, 0xE8F0FA, from: 796, to: 262)
-ctx.restoreGState()
-
-// The modification: sparkles pressed into the bubble, for the assistant. Light grey, with a
-// light rim below (the bubble catching light) and an inner shadow along the top edge.
-for (c, o, i) in [(CGPoint(x: 486, y: 552), CGFloat(112), CGFloat(33)),
-                  (CGPoint(x: 654, y: 664), CGFloat(62), CGFloat(19)),
-                  (CGPoint(x: 660, y: 452), CGFloat(40), CGFloat(12))] {
-    let s = sparkle(at: c, outer: o, inner: i)
-    // Soften the points, and merge into one outline so the even-odd fill below works.
-    let rounded = s.union(s.copy(strokingWithWidth: 10, lineCap: .round, lineJoin: .round,
-                                 miterLimit: 10))
-    func shape() { ctx.addPath(rounded) }
-
-    // Highlight rim: a white copy nudged down, peeking out under the recess.
+// A white message bubble at the lower left, white ✨ sparkles at the upper right.
+func whiteShape(_ add: () -> Void, top: CGFloat, bottom: CGFloat) {
     ctx.saveGState()
-    ctx.translateBy(x: 0, y: -4)
-    shape()
+    ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 26, color: color(0x00306E, 0.30))
+    add()
     ctx.setFillColor(color(0xFFFFFF))
     ctx.fillPath()
     ctx.restoreGState()
-
-    // Recess fill: dark grey, slightly darker at the top where the light doesn't reach.
     ctx.saveGState()
-    shape()
+    add()
     ctx.clip()
-    gradient(0xA2A6AC, 0xBDC0C5, from: c.y + o, to: c.y - o)
-
-    // Inner shadow: fill everything outside the sparkle with a shadow cast downward,
-    // clipped to the sparkle, so a dark band hugs its upper edges.
-    let outside = CGMutablePath()
-    outside.addRect(CGRect(x: c.x - o * 3, y: c.y - o * 3, width: o * 6, height: o * 6))
-    outside.addPath(rounded)
-    ctx.setShadow(offset: CGSize(width: 0, height: -5), blur: 8, color: color(0x000000, 0.38))
-    ctx.addPath(outside)
-    ctx.setFillColor(color(0x000000))
-    ctx.fillPath(using: .evenOdd)
+    gradient(0xFFFFFF, 0xE8F0FA, from: top, to: bottom)
     ctx.restoreGState()
+}
+
+// The original bubble (oval + lower-left tail), scaled down and moved left.
+let bubble = CGMutablePath()
+bubble.addEllipse(in: CGRect(x: 212, y: 318, width: 600, height: 478))
+bubble.move(to: CGPoint(x: 300, y: 430))
+bubble.addQuadCurve(to: CGPoint(x: 232, y: 262), control: CGPoint(x: 306, y: 318))
+bubble.addQuadCurve(to: CGPoint(x: 450, y: 330), control: CGPoint(x: 352, y: 270))
+bubble.closeSubpath()
+let bs: CGFloat = 0.888
+var bt = CGAffineTransform(translationX: 440, y: 440).scaledBy(x: bs, y: bs)
+    .translatedBy(x: -512, y: -557)
+let small = bubble.copy(using: &bt)!
+whiteShape({ ctx.addPath(small) }, top: small.boundingBox.maxY, bottom: small.boundingBox.minY)
+
+// Laid out like ✨: big star, a medium one up and to its left, a small one down and to its left.
+for (c, o, i) in [(CGPoint(x: 786, y: 724), CGFloat(86), CGFloat(14)),
+                  (CGPoint(x: 664, y: 836), CGFloat(42), CGFloat(7)),
+                  (CGPoint(x: 676, y: 652), CGFloat(26), CGFloat(5))] {
+    let s = sparkle(at: c, outer: o, inner: i)
+    let rounded = s.union(s.copy(strokingWithWidth: 10, lineCap: .round, lineJoin: .round,
+                                 miterLimit: 10))
+    whiteShape({ ctx.addPath(rounded) }, top: c.y + o, bottom: c.y - o)
 }
 
 let rep = NSBitmapImageRep(cgImage: ctx.makeImage()!)
