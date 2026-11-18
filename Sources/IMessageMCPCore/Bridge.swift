@@ -83,7 +83,65 @@ public final class LiveBridge: SystemBridge {
         return (result.status == 0 && !result.timedOut, result.output)
     }
 
+    /// Runs `work` on a worker thread, exits when it returns, and leaves the main
+    /// thread to AppKit.
+    ///
+    /// A tool call blocks its thread for a long time: reading stdin, waiting on
+    /// osascript, polling for delivery. If that were the main thread, the
+    /// confirmation dialog could not close after a click (it stays on screen,
+    /// frozen, with a beach ball) because nothing is running the event loop.
+    public static func runOffMainThread(_ work: @escaping () -> Void) -> Never {
+        let thread = Thread {
+            work()
+            exit(0)
+        }
+        thread.stackSize = 8 << 20  // same as a main thread
+        thread.start()
+        CFRunLoopRun()
+        exit(0)
+    }
+
+    private var appStarted = false
+
     public func confirm(text: String, recipient: String) -> ConfirmAnswer {
+        if Thread.isMainThread { return present(text: text, recipient: recipient) }
+        // Start the app's event loop the first time a dialog is needed. It never
+        // returns; the dialog runs inside it. These are run loop blocks, not
+        // DispatchQueue.main ones: a main-queue block that never returns would
+        // stall that queue.
+        //
+        // Wait for that block to start before queueing the dialog. The run loop
+        // takes its pending blocks as one batch, so a dialog block in the same
+        // batch as the never-returning one would never run.
+        let loopReady = DispatchSemaphore(value: 0)
+        onMainRunLoop {
+            guard !self.appStarted else {
+                loopReady.signal()
+                return
+            }
+            self.appStarted = true
+            let app = NSApplication.shared
+            app.setActivationPolicy(.accessory)
+            loopReady.signal()
+            app.run()
+        }
+        loopReady.wait()
+        var answer = ConfirmAnswer.timedOut
+        let done = DispatchSemaphore(value: 0)
+        onMainRunLoop {
+            answer = self.present(text: text, recipient: recipient)
+            done.signal()
+        }
+        done.wait()
+        return answer
+    }
+
+    private func onMainRunLoop(_ block: @escaping () -> Void) {
+        CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue, block)
+        CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
+
+    private func present(text: String, recipient: String) -> ConfirmAnswer {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
