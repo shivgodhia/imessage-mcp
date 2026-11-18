@@ -42,7 +42,7 @@ let command = arguments.isEmpty ? nil : arguments.removeFirst()
 switch command {
 case nil:
     if stdinIsPipe() {
-        server.serve()
+        LiveBridge.runOffMainThread { server.serve() }
     } else if isatty(STDIN_FILENO) != 0 {
         print(usage)
     } else {
@@ -115,18 +115,21 @@ case "call":
         }
         toolArguments = parsed
     }
-    do {
-        for item in try server.call(tool, toolArguments, fromShell: true) {
-            if let text = item["text"] as? String {
-                print(text)
-            } else if let data = item["data"] as? String {
-                print("<image, \(data.count) base64 characters>")
+    // Off the main thread so the confirmation dialog stays responsive.
+    LiveBridge.runOffMainThread {
+        do {
+            for item in try server.call(tool, toolArguments, fromShell: true) {
+                if let text = item["text"] as? String {
+                    print(text)
+                } else if let data = item["data"] as? String {
+                    print("<image, \(data.count) base64 characters>")
+                }
             }
+        } catch let error as ToolError {
+            fail(error.message)
+        } catch {
+            fail("\(error)")
         }
-    } catch let error as ToolError {
-        fail(error.message)
-    } catch {
-        fail("\(error)")
     }
 
 case "version", "--version", "-v":
