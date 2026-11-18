@@ -1,6 +1,6 @@
 import Foundation
 
-public let version = "1.0.2"
+public let version = "1.1.0"
 public let bundleIdentifier = "com.shivgodhia.imessage-mcp"
 
 /// Something the caller did wrong or that the Mac refused. Shown to Claude as the tool's error.
@@ -45,11 +45,13 @@ public struct Config {
     /// Empty = every conversation is visible. Otherwise only these can be listed,
     /// read, searched or sent to.
     public var allowedChats: [String] = []
-    /// "confirm": show a dialog with the recipient and exact text, send only on a click.
-    /// "allow": leave the asking to the MCP client, the way connectors like Gmail work.
+    /// "allow": send when asked. The MCP client (the Claude app) does the asking,
+    /// the way it does for connectors like Gmail.
+    /// "confirm": also show a dialog on the Mac with the recipient and exact text,
+    /// and send only on a click.
     /// "off": never send.
-    public var send = "confirm"
-    /// Conversations that skip the dialog. The dialog's Always Allow button adds one.
+    public var send = "allow"
+    /// With "confirm": conversations that skip the dialog. Its Always Allow button adds one.
     public var alwaysAllowSend: [String] = []
 
     static func strings(_ value: Any?) -> [String] {
@@ -86,7 +88,7 @@ public struct Config {
 
     public static func createDefaultIfMissing(_ path: String) throws {
         guard !FileManager.default.fileExists(atPath: path) else { return }
-        let json: [String: Any] = ["allowed_chats": [String](), "send": "confirm", "always_allow_send": [String]()]
+        let json: [String: Any] = ["allowed_chats": [String](), "send": "allow", "always_allow_send": [String]()]
         try writeJSON(json, to: path)
     }
 }

@@ -555,7 +555,7 @@ public final class Server {
         return Server.text(untrustedNotice + "\n\n" + lines.joined(separator: "\n") + tail)
     }
 
-    func sendMessage(_ args: [String: Any], forceConfirm: Bool) throws -> ToolContent {
+    func sendMessage(_ args: [String: Any], shellApproval: ((_ text: String, _ recipient: String) -> Bool)?) throws -> ToolContent {
         let config = try Config.load(environment.configPath)
         if config.send == "off" {
             throw ToolError("Sending is turned off in \(environment.configPath).")
@@ -607,8 +607,10 @@ public final class Server {
         }
         let before = try wrap { try db.query("select coalesce(max(ROWID), 0) from message") }[0][0].int
 
-        let gated = config.send == "confirm" || forceConfirm
-        if gated && !preapproved {
+        let gated = config.send == "confirm" && shellApproval == nil
+        if let shellApproval = shellApproval {
+            if !shellApproval(text, recipient) { throw ToolError("Not sent.") }
+        } else if gated && !preapproved {
             switch bridge.confirm(text: text, recipient: recipient) {
             case .send:
                 break
@@ -722,18 +724,21 @@ public final class Server {
 
     // MARK: Dispatch
 
-    /// `fromShell`: run from the command line rather than by an MCP client.
+    /// `shellApproval`: set when run from the command line rather than by an MCP
+    /// client. It is shown the text and recipient and says whether to send.
     ///
     /// An MCP client (the Claude app) asks the user to approve a send before it
-    /// calls the tool. A shell has no such prompt, so a send from there always
-    /// goes through the confirmation dialog.
-    public func call(_ name: String, _ args: [String: Any], fromShell: Bool = false) throws -> ToolContent {
+    /// calls the tool. A shell has no such prompt, so the command line asks there.
+    public func call(
+        _ name: String, _ args: [String: Any],
+        shellApproval: ((_ text: String, _ recipient: String) -> Bool)? = nil
+    ) throws -> ToolContent {
         switch name {
         case "list_chats": return try listChats(args)
         case "read_chat": return try readChat(args)
         case "search_messages": return try searchMessages(args)
         case "new_messages": return try newMessages(args)
-        case "send_message": return try sendMessage(args, forceConfirm: fromShell)
+        case "send_message": return try sendMessage(args, shellApproval: shellApproval)
         case "get_attachment": return try getAttachment(args)
         default: throw ToolError("Unknown tool \"\(name)\"")
         }
