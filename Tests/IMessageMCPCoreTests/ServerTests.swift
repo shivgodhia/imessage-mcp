@@ -137,8 +137,10 @@ class Fixture: XCTestCase {
     }
 
     @discardableResult
-    func call(_ tool: String, _ args: [String: Any] = [:], fromShell: Bool = false) throws -> String {
-        try server.call(tool, args, fromShell: fromShell).compactMap { $0["text"] as? String }.joined(separator: "\n")
+    func call(
+        _ tool: String, _ args: [String: Any] = [:], shellApproval: ((String, String) -> Bool)? = nil
+    ) throws -> String {
+        try server.call(tool, args, shellApproval: shellApproval).compactMap { $0["text"] as? String }.joined(separator: "\n")
     }
 
     func rows(_ output: String) -> [String] {
@@ -269,7 +271,14 @@ final class AllowlistTests: Fixture {
 final class SendTests: Fixture {
     let hi: [String: Any] = ["chat": "+15551230001", "text": "hi"]
 
-    func testAsksByDefaultWhenThereIsNoConfig() {
+    func testSendsWithoutDialogWhenThereIsNoConfig() throws {
+        try call("send_message", hi)
+        XCTAssertTrue(bridge.confirms.isEmpty)
+        XCTAssertEqual(bridge.sends.count, 1)
+    }
+
+    func testConfirmModeShowsRecipientAndText() {
+        configure(["send": "confirm"])
         XCTAssertThrowsError(try call("send_message", hi))
         XCTAssertEqual(bridge.confirms.count, 1)
         XCTAssertEqual(bridge.confirms[0].text, "hi")
@@ -373,10 +382,24 @@ final class SendTests: Fixture {
         XCTAssertNil(try Config.load(configPath).alwaysAllowSend.first)
     }
 
-    func testShellSendAlwaysAsksEvenInAllowMode() {
-        configure(["send": "allow"])
-        XCTAssertThrowsError(try call("send_message", hi, fromShell: true))
-        XCTAssertEqual(bridge.confirms.count, 1)
+    func testShellSendAsksInTheShellNotWithTheDialog() throws {
+        for mode in ["allow", "confirm"] {
+            configure(["send": mode, "always_allow_send": ["+15551230001"]])
+            var asked: [(String, String)] = []
+            XCTAssertThrowsError(try call("send_message", hi) { asked.append(($0, $1)); return false })
+            XCTAssertEqual(asked.count, 1)
+            XCTAssertEqual(asked[0].0, "hi")
+            XCTAssertTrue(asked[0].1.contains("+15551230001"))
+        }
+        XCTAssertTrue(bridge.sends.isEmpty)
+        try call("send_message", hi) { _, _ in true }
+        XCTAssertEqual(bridge.sends.count, 1)
+        XCTAssertTrue(bridge.confirms.isEmpty)
+    }
+
+    func testShellCannotSendWhenSendIsOff() {
+        configure(["send": "off"])
+        XCTAssertThrowsError(try call("send_message", hi) { _, _ in true })
         XCTAssertTrue(bridge.sends.isEmpty)
     }
 
@@ -516,8 +539,8 @@ final class SetupTests: Fixture {
         XCTAssertEqual(String(decoding: FileManager.default.contents(atPath: claude)!, as: UTF8.self), "{not json")
     }
 
-    func testDefaultOptionsAskBeforeSending() throws {
+    func testDefaultOptionsLeaveAskingToClaude() throws {
         try Config.createDefaultIfMissing(configPath)
-        XCTAssertEqual(try Config.load(configPath).send, "confirm")
+        XCTAssertEqual(try Config.load(configPath).send, "allow")
     }
 }

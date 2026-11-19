@@ -11,6 +11,7 @@ let usage = """
       imessage-mcp setup --no-open same, without opening System Settings
       imessage-mcp check           show options and whether the Messages database can be read
       imessage-mcp call <tool> '<json arguments>'
+      imessage-mcp call send_message '<json>' --yes   send without the "Send? [y/N]" question
       imessage-mcp uninstall       disconnect from the Claude app
       imessage-mcp version
 
@@ -31,7 +32,7 @@ func stdinIsPipe() -> Bool {
 }
 
 let bridge = LiveBridge()
-// Shortens how long the confirmation dialog waits. It can only make "not sent" happen sooner.
+// Shortens how long the optional confirmation dialog (send: "confirm") waits. It can only make "not sent" happen sooner.
 if let seconds = ProcessInfo.processInfo.environment["IMESSAGE_MCP_CONFIRM_TIMEOUT"].flatMap(Double.init), seconds > 0 {
     bridge.confirmTimeout = min(seconds, bridge.confirmTimeout)
 }
@@ -107,6 +108,8 @@ case "check":
     }
 
 case "call":
+    let yes = arguments.contains("--yes") || arguments.contains("-y")
+    arguments.removeAll { $0 == "--yes" || $0 == "-y" }
     guard let tool = arguments.first else { fail("usage: imessage-mcp call <tool> '<json arguments>'") }
     var toolArguments: [String: Any] = [:]
     if arguments.count > 1 {
@@ -115,21 +118,29 @@ case "call":
         }
         toolArguments = parsed
     }
-    // Off the main thread so the confirmation dialog stays responsive.
-    LiveBridge.runOffMainThread {
-        do {
-            for item in try server.call(tool, toolArguments, fromShell: true) {
-                if let text = item["text"] as? String {
-                    print(text)
-                } else if let data = item["data"] as? String {
-                    print("<image, \(data.count) base64 characters>")
-                }
-            }
-        } catch let error as ToolError {
-            fail(error.message)
-        } catch {
-            fail("\(error)")
+    // Nobody has approved a send typed into a shell, so ask right here.
+    let interactive = isatty(STDIN_FILENO) != 0
+    if tool == "send_message" && !yes && !interactive {
+        fail("Not sent: there is no terminal to ask in. Add --yes to send without asking.")
+    }
+    do {
+        let content = try server.call(tool, toolArguments) { text, recipient in
+            if yes { return true }
+            print("To: \(recipient)\n\n\(text)\n\nSend? [y/N] ", terminator: "")
+            let answer = (readLine() ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+            return answer == "y" || answer == "yes"
         }
+        for item in content {
+            if let text = item["text"] as? String {
+                print(text)
+            } else if let data = item["data"] as? String {
+                print("<image, \(data.count) base64 characters>")
+            }
+        }
+    } catch let error as ToolError {
+        fail(error.message)
+    } catch {
+        fail("\(error)")
     }
 
 case "version", "--version", "-v":

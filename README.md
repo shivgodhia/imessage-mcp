@@ -12,13 +12,13 @@
 
 iMessage MCP is a local [MCP](https://modelcontextprotocol.io) server for the
 Claude Mac app. Claude can list your conversations, read a thread, search,
-check for new messages and send a reply, and it asks you before any text goes
-out.
+check for new messages and send a reply. Nothing is sent until you allow it
+in Claude.
 
 - **Local.** It reads the Messages database on your Mac and sends through the
   Messages app. It makes no network calls and has no server, account or API key.
-- **Asks first.** Every send shows you the recipient and the exact text. You
-  can let specific people through without asking, one contact at a time.
+- **Asks first.** Claude shows you the recipient and the exact text and asks
+  before it sends. You click Allow, and it sends.
 - **Small.** One signed, notarized app of about 1.5 MB, with no dependencies.
   The source is about 1,500 lines of Swift.
 
@@ -61,22 +61,20 @@ It cannot mark messages as read, react, edit, unsend, or send attachments.
 
 ## Who approves a text
 
-`send_message` is the only tool that changes anything. Two things stand
-between Claude and a sent text:
+`send_message` is the only tool that changes anything, and you approve it in
+Claude, the same way you approve any other connector. Claude shows the
+recipient and the exact text and asks. Click Allow and the text goes out;
+decline and nothing is sent.
 
-- **The Claude app** asks before running a tool. Each tool has its own setting
-  (always allow, ask every time, blocked), the same way connectors like Gmail
-  work. That setting is per tool, not per person.
-- **A dialog on your Mac**, shown by iMessage MCP itself, with the recipient
-  and the exact text and three buttons: Don't Send, Always Allow, Send.
-  *Always Allow* sends it and remembers that conversation, so Claude can text
-  that person again without asking. Nothing is sent if nobody answers within
-  five minutes.
+In the Claude app each tool has its own setting: ask every time, always allow,
+or blocked. Leave `send_message` on ask every time if you want to see every
+text before it is sent. Always allow lets Claude send without asking.
 
-To avoid being asked twice, set `send_message` to always allow in the Claude
-app and let the dialog be the gate. If you want to approve texts while away
-from your Mac, do the reverse: set `"send": "allow"` below and keep the app on
-ask every time.
+If you want a second check on the Mac itself, set `"send": "confirm"` in the
+options below. iMessage MCP then shows its own dialog with the recipient and
+the exact text and three buttons: Don't Send, Always Allow, Send. *Always
+Allow* remembers that conversation and skips the dialog for it next time.
+Nothing is sent if nobody answers within five minutes.
 
 ## Options
 
@@ -86,18 +84,21 @@ immediately:
 ```json
 {
   "allowed_chats": ["+1 555 123 0001", "landlord@example.com", "Flat hunt"],
-  "send": "confirm",
-  "always_allow_send": ["+1 555 123 0001"]
+  "send": "allow"
 }
 ```
 
 - `allowed_chats`: when non-empty, only these conversations can be listed,
   read, searched or sent to. Everything else is invisible to Claude. Empty
   means all conversations.
-- `send`: `"confirm"` shows the dialog (default), `"allow"` leaves asking to
-  the Claude app, `"off"` makes it read-only.
-- `always_allow_send`: conversations that skip the dialog. The Always Allow
-  button adds to this list; delete an entry to be asked again.
+- `send`: `"allow"` sends once you approve it in Claude (default), `"confirm"`
+  adds the dialog on your Mac, `"off"` makes it read-only.
+- `always_allow_send`: only used with `"confirm"`. Conversations that skip the
+  dialog. The Always Allow button adds to this list; delete an entry to be
+  asked again.
+
+Installed before 1.1.0? Your options file says `"send": "confirm"`, which was
+the old default. Change it to `"allow"` to stop seeing the extra dialog.
 
 Entries can be phone numbers in any format, emails, contact names, group names
 or the identifiers `list_chats` prints.
@@ -106,17 +107,18 @@ or the identifiers `list_chats` prints.
 
 Texts are written by other people, and a message can contain instructions
 aimed at an AI reading it. iMessage MCP labels message content as untrusted in
-every result, but the protections that hold are the dialog and the allowlist.
-If you let Claude work through threads with strangers, keep `send` on
-`"confirm"` and consider listing only those threads in `allowed_chats`.
+every result, but the protections that hold are your approval of each send
+and the allowlist. If you let Claude work through threads with strangers, keep
+`send_message` on ask every time in the Claude app and consider listing only
+those threads in `allowed_chats`.
 
 Full Disk Access is broad: it lets iMessage MCP read any file your account
 can. The app only opens the Messages database, your Contacts databases (for
 names), and attachments you ask for. It opens them read-only and never
 connects to the network; the source is here to check.
 
-The dialog protects against Claude in the Claude app. It is not a barrier
-against other software running as you, which could edit the options file.
+The options file is not a barrier against other software running as you,
+which could edit it.
 
 ## How it works
 
@@ -153,7 +155,14 @@ imsg call list_chats '{"unread_only": true}'
 imsg call read_chat '{"chat": "Flat hunt", "limit": 50}'
 ```
 
-A send from a shell always shows the dialog. To add the server to Claude Code:
+A send from a shell prints the recipient and the text and asks `Send? [y/N]`
+in the terminal. In a script, where there is nobody to ask, add `--yes`:
+
+```sh
+imsg call send_message '{"chat": "Flat hunt", "text": "On my way"}' --yes
+```
+
+To add the server to Claude Code:
 
 ```sh
 claude mcp add --scope user imessage -- "/Applications/iMessage MCP.app/Contents/MacOS/imessage-mcp"
