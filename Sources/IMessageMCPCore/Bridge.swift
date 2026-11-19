@@ -152,7 +152,7 @@ public final class LiveBridge: SystemBridge {
         alert.messageText = "Send this text?"
         alert.informativeText =
             "To: \(recipient)\n\n\(shown)\n\n"
-            + "Always Allow sends it and lets Claude text this conversation without asking again."
+            + "Always Allow sends it and lets your AI text this conversation without asking again."
         let send = alert.addButton(withTitle: "Send")
         alert.addButton(withTitle: "Always Allow")
         let cancel = alert.addButton(withTitle: "Don't Send")
