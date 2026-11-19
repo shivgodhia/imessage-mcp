@@ -1,9 +1,9 @@
 import Foundation
 
-public let version = "1.1.0"
+public let version = "1.2.0"
 public let bundleIdentifier = "com.shivgodhia.imessage-mcp"
 
-/// Something the caller did wrong or that the Mac refused. Shown to Claude as the tool's error.
+/// Something the caller did wrong or that the Mac refused. Shown to the agent as the tool's error.
 public struct ToolError: Error {
     public let message: String
     public init(_ message: String) { self.message = message }
@@ -45,7 +45,7 @@ public struct Config {
     /// Empty = every conversation is visible. Otherwise only these can be listed,
     /// read, searched or sent to.
     public var allowedChats: [String] = []
-    /// "allow": send when asked. The MCP client (the Claude app) does the asking,
+    /// "allow": send when asked. The MCP client (Claude, Cursor, Codex, ...) does the asking,
     /// the way it does for connectors like Gmail.
     /// "confirm": also show a dialog on the Mac with the recipient and exact text,
     /// and send only on a click.

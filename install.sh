@@ -3,7 +3,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/shivgodhia/imessage-mcp/main/install.sh | sh
 #
 # Downloads the latest signed, notarized release, puts it in /Applications and
-# connects it to the Claude Mac app. Nothing needs to be compiled.
+# connects it to the AI apps on this Mac (Claude, Cursor, Codex, ...). Nothing needs to be compiled.
 set -e
 
 if [ "$(uname)" != "Darwin" ]; then

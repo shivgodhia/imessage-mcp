@@ -3,16 +3,16 @@ import Foundation
 import IMessageMCPCore
 
 let usage = """
-    iMessage MCP \(version): lets Claude read and send your texts, locally.
+    iMessage MCP \(version): lets AI agents on this Mac read and send your texts, locally.
 
     Usage:
-      imessage-mcp                 serve MCP over stdin/stdout (how the Claude app runs it)
-      imessage-mcp setup           connect to the Claude app and open Full Disk Access settings
+      imessage-mcp                 serve MCP over stdin/stdout (how AI apps run it)
+      imessage-mcp setup           connect every AI app found on this Mac, open Full Disk Access
       imessage-mcp setup --no-open same, without opening System Settings
       imessage-mcp check           show options and whether the Messages database can be read
       imessage-mcp call <tool> '<json arguments>'
       imessage-mcp call send_message '<json>' --yes   send without the "Send? [y/N]" question
-      imessage-mcp uninstall       disconnect from the Claude app
+      imessage-mcp uninstall       disconnect from every AI app
       imessage-mcp version
 
     Tools: list_chats, read_chat, search_messages, new_messages, send_message, get_attachment
@@ -40,6 +40,12 @@ let server = Server(environment: .live(), bridge: bridge)
 var arguments = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
 let command = arguments.isEmpty ? nil : arguments.removeFirst()
 
+// Before anything touches Messages: make macOS check permissions against this app, not
+// whichever editor, terminal or agent started it. Not for a Finder double-click, which already is.
+if command != nil || stdinIsPipe() || isatty(STDIN_FILENO) != 0 {
+    Responsibility.becomeResponsibleProcess(executable: Setup.executablePath())
+}
+
 switch command {
 case nil:
     if stdinIsPipe() {
@@ -51,41 +57,54 @@ case nil:
     }
 
 case "setup":
+    let executable = Setup.executablePath()
+    let results = Setup.registerAll(executable: executable)
     do {
-        let executable = Setup.executablePath()
-        let changed = try Setup.register(executable: executable)
         try Config.createDefaultIfMissing(server.environment.configPath)
-        Setup.removeLegacyInstall()
-        print("iMessage MCP \(version)")
-        print("  app:     \(executable)")
-        print("  options: \(server.environment.configPath)")
-        print("  Claude:  \(changed ? "registered" : "already registered") as \"\(Setup.serverName)\"")
-        print("")
-        print("Two steps left:")
-        print("  1. In System Settings > Privacy & Security > Full Disk Access, switch on iMessage MCP.")
-        print("  2. Quit Claude completely (Cmd+Q) and reopen it.")
-        print("")
-        print("The first time Claude sends a text, macOS asks whether iMessage MCP may")
-        print("control Messages. Click Allow.")
-        if !arguments.contains("--no-open") {
-            let open = Process()
-            open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            open.arguments = [Setup.fullDiskAccessURL]
-            try? open.run()
-        }
     } catch {
         fail((error as? ToolError)?.message ?? error.localizedDescription)
+    }
+    Setup.removeLegacyInstall()
+    print("iMessage MCP \(version)")
+    print("  app:     \(executable)")
+    print("  options: \(server.environment.configPath)")
+    print("")
+    if results.isEmpty {
+        print("No AI app found to connect. Add it to yours as a local (stdio) MCP server:")
+        print("  command: \(executable)")
+    }
+    for result in results {
+        let state: String
+        switch result.change {
+        case .added: state = "connected, \(result.client.restart)"
+        case .updated: state = "updated, \(result.client.restart)"
+        case .unchanged: state = "already connected"
+        case let .failed(why): state = "NOT connected: \(why)"
+        case .removed, .absent: state = ""
+        }
+        print("  \(result.client.name.padding(toLength: 12, withPad: " ", startingAt: 0)) \(state)")
+    }
+    print("")
+    print("Last step: in System Settings > Privacy & Security > Full Disk Access, switch on")
+    print("iMessage MCP. That one switch covers every app above. The first time a text is")
+    print("sent, macOS asks whether iMessage MCP may control Messages. Click Allow.")
+    if !arguments.contains("--no-open") {
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = [Setup.fullDiskAccessURL]
+        try? open.run()
     }
 
 case "uninstall":
-    do {
-        let removed = try Setup.unregister()
-        print(removed ? "Disconnected from the Claude app." : "The Claude app was not using iMessage MCP.")
-        print("Your options in \(server.environment.configPath) were kept.")
-        print("To finish, quit Claude and move iMessage MCP to the Trash.")
-    } catch {
-        fail((error as? ToolError)?.message ?? error.localizedDescription)
+    for result in Setup.unregisterAll() {
+        switch result.change {
+        case .removed: print("  \(result.client.name): disconnected")
+        case let .failed(why): print("  \(result.client.name): could not disconnect: \(why)")
+        default: break
+        }
     }
+    print("Your options in \(server.environment.configPath) were kept.")
+    print("To finish, restart those apps and move iMessage MCP to the Trash.")
 
 case "check":
     let path = server.environment.configPath

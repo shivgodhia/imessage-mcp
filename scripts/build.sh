@@ -3,7 +3,7 @@
 #
 #   scripts/build.sh             universal app, signed with a Developer ID if this
 #                                Mac has one, otherwise ad hoc (fine for your own use)
-#   scripts/build.sh --install   also copy it to /Applications and connect it to Claude
+#   scripts/build.sh --install   also copy it to /Applications and connect the AI apps found
 #   scripts/build.sh --dmg       also make build/iMessage-MCP.dmg, notarized and stapled
 #   scripts/build.sh --release   --dmg, then publish it as GitHub release v<version>
 #
