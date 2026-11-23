@@ -83,6 +83,21 @@ public final class LiveBridge: SystemBridge {
         return (result.status == 0 && !result.timedOut, result.output)
     }
 
+    /// The link that makes Messages open a new message to several people.
+    static func composeLink(recipients: [String], text: String) -> String {
+        // Stricter than a URL needs: a bare "+" in a phone number would be read as a space.
+        var plain = CharacterSet.alphanumerics
+        plain.insert(charactersIn: "@.-_")
+        let escape = { (value: String) in value.addingPercentEncoding(withAllowedCharacters: plain) ?? "" }
+        return "imessage://open?addresses=" + recipients.map(escape).joined(separator: ",") + "&body=" + escape(text)
+    }
+
+    public func compose(recipients: [String], text: String) -> (ok: Bool, output: String) {
+        let link = LiveBridge.composeLink(recipients: recipients, text: text)
+        let result = runProcess("/usr/bin/open", ["-a", "Messages", link], input: "", timeout: 20)
+        return (result.status == 0 && !result.timedOut, result.output)
+    }
+
     /// Runs `work` on a worker thread, exits when it returns, and leaves the main
     /// thread to AppKit.
     ///

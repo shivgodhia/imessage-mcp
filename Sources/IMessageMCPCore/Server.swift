@@ -148,6 +148,9 @@ public protocol SystemBridge {
     func confirm(text: String, recipient: String) -> ConfirmAnswer
     /// Asks Messages to send. `mode` is "chat" (target is a chat guid), "imessage" or "sms".
     func send(text: String, target: String, mode: String) -> (ok: Bool, output: String)
+    /// Opens a new message in Messages addressed to `recipients` with `text` typed in.
+    /// Nothing is sent: the user presses Return.
+    func compose(recipients: [String], text: String) -> (ok: Bool, output: String)
 }
 
 public typealias ToolContent = [[String: Any]]
@@ -159,8 +162,12 @@ public final class Server {
     public var bridge: SystemBridge
     /// Seconds to wait for Messages to record a sent message.
     public var sendWait: TimeInterval = 8
+    /// Seconds to wait for the user to press Return on a new group message.
+    public var composeWait: TimeInterval = 30
 
     private var contactCache: [String: String] = [:]
+    /// Normalised handle -> the number or email as written in Contacts.
+    private var contactAddresses: [String: String] = [:]
     private var contactsLoadedAt = Date.distantPast
 
     public init(environment: Environment, bridge: SystemBridge) {
@@ -201,6 +208,7 @@ public final class Server {
             return contactCache
         }
         var out: [String: String] = [:]
+        var written: [String: String] = [:]
         for path in environment.addressBooks() {
             guard let db = try? Database(path: path) else { continue }
             for (table, column) in [("ZABCDPHONENUMBER", "ZFULLNUMBER"), ("ZABCDEMAILADDRESS", "ZADDRESS")] {
@@ -217,10 +225,12 @@ public final class Server {
                     let key = norm(value)
                     if let existing = out[key], existing.count >= name.count { continue }
                     out[key] = name
+                    written[key] = value
                 }
             }
         }
         contactCache = out
+        contactAddresses = written
         contactsLoadedAt = Date()
         return out
     }
@@ -294,8 +304,74 @@ public final class Server {
         }
     }
 
+    // MARK: Several people at once
+
+    /// "Ana, Ben, +1 555 ..." names several people. nil for a single reference.
+    func people(in reference: String) -> [String]? {
+        let parts = reference.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        return parts.count >= 2 ? parts : nil
+    }
+
+    /// The normalised handles one entry in such a list could mean: the address
+    /// itself, or every number and email of the contacts with that name.
+    func handles(for person: String) -> Set<String> {
+        if looksLikeAddress(person) { return [norm(person)] }
+        let low = person.lowercased()
+        let book = contacts()
+        let exact = book.filter { $0.value.lowercased() == low }
+        return Set((exact.isEmpty ? book.filter { $0.value.lowercased().contains(low) } : exact).keys)
+    }
+
+    /// Group conversations whose members are exactly these people.
+    func groups(_ db: Database, among chats: [Chat], with people: [String]) throws -> [Chat] {
+        let wanted = people.map { handles(for: $0) }
+        if wanted.contains(where: { $0.isEmpty }) { return [] }
+        return try chats.filter { chat in
+            guard chat.group else { return false }
+            let members = try participants(db, chat.id).map(norm)
+            guard members.count == people.count else { return false }
+            let seats = members.map { member in wanted.firstIndex { $0.contains(member) } }
+            return !seats.contains(nil) && Set(seats.compactMap { $0 }).count == people.count
+        }
+    }
+
+    /// The number or email to address a new conversation to for one entry in a list.
+    func address(_ db: Database, for person: String) throws -> String {
+        if looksLikeAddress(person) {
+            let trimmed = person.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.contains("@") ? trimmed : trimmed.filter { $0 == "+" || $0.isNumber }
+        }
+        let keys = handles(for: person)
+        if keys.isEmpty {
+            throw ToolError(
+                "Nobody called \"\(person)\" in Contacts. Pass their phone number (with country code) "
+                    + "or email instead.")
+        }
+        let book = contacts()
+        let names = Set(keys.compactMap { book[$0] })
+        if names.count > 1 {
+            throw ToolError(
+                "\"\(person)\" matches several contacts (\(names.sorted().prefix(8).joined(separator: ", "))). "
+                    + "Use the full name, or a phone number or email.")
+        }
+        // Prefer the address the user already texts this person on.
+        var best: (id: String, date: Int64)?
+        for chat in try allChats(db).values where !chat.group && keys.contains(norm(chat.id)) {
+            let date = try lastActivity(db, chat.id)
+            if best == nil || date > best!.date { best = (chat.id, date) }
+        }
+        if let best = best { return best.id }
+        if keys.count == 1, let only = contactAddresses[keys.first!] { return only }
+        let options = keys.compactMap { contactAddresses[$0] }.sorted().joined(separator: ", ")
+        throw ToolError(
+            "\(names.first ?? person) has several numbers or emails (\(options)) and no conversation yet. "
+                + "Pass the one to use.")
+    }
+
     /// Finds the conversation the caller means: an identifier from list_chats,
-    /// a phone number or email in any format, or a contact or group name.
+    /// a phone number or email in any format, a contact or group name, or
+    /// several people separated by commas (the group with exactly them in it).
     func resolve(_ db: Database, _ config: Config, _ reference: String?) throws -> Chat? {
         let ref = (reference ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if ref.isEmpty { throw ToolError("chat is required") }
@@ -303,7 +379,10 @@ public final class Server {
         if let exact = chats[ref] { return exact }
         let all = chats.values.sorted { $0.id < $1.id }
         let key = norm(ref)
-        var hits = all.filter { !$0.group && norm($0.id) == key }
+        // A list of people is never one person's number: norm would keep the
+        // digits of the last number in it and find that person's own thread.
+        let several = people(in: ref)
+        var hits = several == nil ? all.filter { !$0.group && norm($0.id) == key } : []
         if hits.isEmpty {
             let low = ref.lowercased()
             let labelled = all.map { chat -> (Chat, String) in
@@ -312,6 +391,9 @@ public final class Server {
             hits = labelled.filter { !$0.1.isEmpty && $0.1 == low }.map { $0.0 }
             if hits.isEmpty {
                 hits = labelled.filter { !$0.1.isEmpty && $0.1.contains(low) }.map { $0.0 }
+            }
+            if hits.isEmpty, let several = several {
+                hits = try groups(db, among: all, with: several)
             }
         }
         if hits.count > 1, !hits.contains(where: { $0.group }), Set(hits.map { norm($0.id) }).count == 1 {
@@ -596,10 +678,14 @@ public final class Server {
             if !config.allowedChats.isEmpty {
                 throw ToolError("\"\(ref)\" is not in allowed_chats in \(environment.configPath).")
             }
+            if let people = people(in: ref) {
+                return try startGroup(db, people, text: text)
+            }
             if !looksLikeAddress(ref) {
                 throw ToolError(
                     "No conversation found for \"\(ref)\". To start a new one pass a phone "
-                        + "number (with country code) or an email address.")
+                        + "number (with country code) or an email address, or several separated "
+                        + "by commas for a new group.")
             }
             recipient = name(for: ref).map { "\($0) (\(ref))" } ?? ref
             attempts = [(ref, "imessage"), (ref, "sms")]
@@ -660,7 +746,22 @@ public final class Server {
         }
 
         // Messages reports success before delivery, so look for the row it writes.
-        let deadline = Date().addingTimeInterval(sendWait)
+        if let row = try sentRow(after: before, text: trimmed, wait: sendWait, recipient: recipient) {
+            return Server.text(
+                "Sent to \(recipient) via \(row.service) (message \(row.id), \(row.state)).\(note)")
+        }
+        return Server.text(
+            "Handed to Messages for \(recipient), but it has not shown as sent yet. "
+                + "Check with read_chat before telling the user it was sent, and do not "
+                + "resend without checking.")
+    }
+
+    /// Waits for the row Messages writes once a text from the user has gone out.
+    /// nil if it has not shown as sent by then; throws if Messages recorded a failure.
+    func sentRow(after before: Int64, text trimmed: String, wait: TimeInterval, recipient: String) throws
+        -> (id: Int64, state: String, service: String)?
+    {
+        let deadline = Date().addingTimeInterval(wait)
         while Date() < deadline {
             Thread.sleep(forTimeInterval: 0.5)
             let fresh = try openMessages()
@@ -677,17 +778,49 @@ public final class Server {
                             + "\(row[0].int)). It shows as Not Delivered in the Messages app.")
                 }
                 if row[4].int != 0 || row[5].int != 0 {
-                    let state = row[5].int != 0 ? "delivered" : "sent"
-                    let service = row[6].string ?? "Messages"
-                    return Server.text(
-                        "Sent to \(recipient) via \(service) (message \(row[0].int), \(state)).\(note)")
+                    return (row[0].int, row[5].int != 0 ? "delivered" : "sent", row[6].string ?? "Messages")
                 }
             }
         }
+        return nil
+    }
+
+    /// Messages lets another app send to a conversation that exists, but not
+    /// create a group. So a new group is a draft: the people and the text are
+    /// filled in, and the user sends it.
+    func startGroup(_ db: Database, _ people: [String], text: String) throws -> ToolContent {
+        var addresses: [String] = []
+        for person in people {
+            let address = try address(db, for: person)
+            if !addresses.contains(where: { norm($0) == norm(address) }) { addresses.append(address) }
+        }
+        if addresses.count < 2 { throw ToolError("A group needs at least two different people.") }
+        let shown = addresses.map { address in name(for: address).map { "\($0) (\(address))" } ?? address }
+        let recipient = "new group (\(shown.joined(separator: ", ")))"
+        let before = try wrap { try db.query("select coalesce(max(ROWID), 0) from message") }[0][0].int
+
+        let opened = bridge.compose(recipients: addresses, text: text)
+        if !opened.ok {
+            throw ToolError("Could not open a new message in Messages. \(opened.output)")
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let row = try sentRow(after: before, text: trimmed, wait: composeWait, recipient: recipient) {
+            let chat = try wrap {
+                try db.query(
+                    "select c.chat_identifier from chat_message_join j join chat c on c.ROWID = j.chat_id "
+                        + "where j.message_id = ?", [.int(row.id)])
+            }.first?[0].string
+            let next = chat.map { " The group is now conversation \($0): use that for the next message." } ?? ""
+            return Server.text(
+                "Sent to \(recipient) via \(row.service) (message \(row.id), \(row.state)): the user "
+                    + "pressed Return on the draft.\(next)")
+        }
         return Server.text(
-            "Handed to Messages for \(recipient), but it has not shown as sent yet. "
-                + "Check with read_chat before telling the user it was sent, and do not "
-                + "resend without checking.")
+            "NOT SENT YET. A new message to \(recipient) is open in the Messages app on the Mac with "
+                + "the text typed in. Messages does not let another app create a group, so the user has "
+                + "to press Return there to send it. Tell them that. Do not say it was sent, and do not "
+                + "call send_message again for this (it would open a second draft). Once they have sent "
+                + "it the group shows up in list_chats and later messages go straight through.")
     }
 
     func getAttachment(_ args: [String: Any]) throws -> ToolContent {

@@ -49,13 +49,26 @@ Updating is the same as installing; your permissions carry over.
 | Tool | What it does |
 | --- | --- |
 | `list_chats` | Conversations, newest first, with contact names, unread counts and the last message. |
-| `read_chat` | Messages in one conversation, found by number, email, contact name or group name. |
+| `read_chat` | Messages in one conversation, found by number, email, contact name, group name, or the people in a group. |
 | `search_messages` | Text search, optionally within one conversation or the last N days. |
 | `new_messages` | Incoming messages since a cursor, for checking what arrived. |
-| `send_message` | Send a text to an existing conversation, or to a new number or email. Reports whether Messages recorded it as sent. |
+| `send_message` | Send a text to an existing conversation or group, or to a new number or email. Reports whether Messages recorded it as sent. |
 | `get_attachment` | Returns a photo as an image (HEIC is converted), or the file path for anything else. |
 
 SMS, RCS and iMessage threads with the same person appear as one conversation.
+
+### Group chats
+
+Groups work like any other conversation. Claude can find one by its name, or
+by the people in it: "the group with Ana and Ben" finds the chat with exactly
+those two, which is how you reach a group that has no name.
+
+Starting a new group takes one keypress from you. Messages lets another app
+send to a conversation that already exists, but not create a group. So when
+you ask Claude to text several people who are not in a group together yet,
+iMessage MCP opens a new message in the Messages app with the people and the
+text filled in, and you press Return to send it. After that the group exists
+and Claude can send to it directly.
 
 It cannot mark messages as read, react, edit, unsend, or send attachments.
 
