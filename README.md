@@ -4,21 +4,24 @@
 
 <h1 align="center">iMessage MCP</h1>
 
-<p align="center">Let Claude read and answer your texts, entirely on your Mac.</p>
+<p align="center">Let your AI agents read and answer your texts, entirely on your Mac.</p>
 
 <p align="center">
   <a href="https://github.com/shivgodhia/imessage-mcp/releases/latest/download/iMessage-MCP.dmg"><b>Download for Mac</b></a>
 </p>
 
-iMessage MCP is a local [MCP](https://modelcontextprotocol.io) server for the
-Claude Mac app. Claude can list your conversations, read a thread, search,
-check for new messages and send a reply. Nothing is sent until you allow it
-in Claude.
+iMessage MCP is a local [MCP](https://modelcontextprotocol.io) server for any
+agent on your Mac that speaks MCP: Claude, Claude Code, Codex, Cursor, VS Code,
+Windsurf, Gemini CLI, LM Studio and others. The agent can list your
+conversations, read a thread, search, check for new messages and send a reply.
 
 - **Local.** It reads the Messages database on your Mac and sends through the
   Messages app. It makes no network calls and has no server, account or API key.
-- **Asks first.** Claude shows you the recipient and the exact text and asks
-  before it sends. You click Allow, and it sends.
+- **Any agent.** Setup connects every supported app it finds, and one Full Disk
+  Access switch covers all of them. Your editor or terminal never needs access
+  to your disk.
+- **You approve sends.** Your agent asks before a text goes out, or iMessage MCP
+  asks for it if your agent runs tools without asking (see below).
 - **Small.** One signed, notarized app of about 1.5 MB, with no dependencies.
   The source is about 1,500 lines of Swift.
 
@@ -26,11 +29,11 @@ in Claude.
 
 1. [Download iMessage MCP](https://github.com/shivgodhia/imessage-mcp/releases/latest/download/iMessage-MCP.dmg),
    open the disk image and drag the app into Applications.
-2. Open **iMessage MCP** from Applications. It connects itself to the Claude
-   app and tells you what is left.
+2. Open **iMessage MCP** from Applications. It connects itself to the AI apps
+   it finds and tells you what is left.
 3. In **System Settings > Privacy & Security > Full Disk Access**, switch on
    **iMessage MCP**. macOS will not let anything read your messages without this.
-4. Quit Claude with Cmd+Q and reopen it.
+4. Restart your AI apps.
 
 Or do steps 1 and 2 from a terminal:
 
@@ -38,13 +41,38 @@ Or do steps 1 and 2 from a terminal:
 curl -fsSL https://raw.githubusercontent.com/shivgodhia/imessage-mcp/main/install.sh | sh
 ```
 
-Ask Claude "what texts did I get today?" to try it. The first time Claude sends
-a text, macOS asks whether iMessage MCP may control Messages. Click Allow.
+Ask your agent "what texts did I get today?" to try it. The first time a text
+is sent, macOS asks whether iMessage MCP may control Messages. Click Allow.
 
-Needs macOS 12 or later and the [Claude Mac app](https://claude.ai/download).
-Updating is the same as installing; your permissions carry over.
+Needs macOS 12 or later. Updating is the same as installing; your permissions
+carry over. Installed an AI app later? Open iMessage MCP again, or run
+`imessage-mcp setup`.
 
-## What Claude can do
+### Apps it connects
+
+| App | Config it adds to |
+| --- | --- |
+| Claude | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Claude Code | user scope, through `claude mcp add` |
+| Codex | `~/.codex/config.toml` |
+| Cursor | `~/.cursor/mcp.json` |
+| VS Code | `~/Library/Application Support/Code/User/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| Gemini CLI | `~/.gemini/settings.json` |
+| LM Studio | `~/.lmstudio/mcp.json` |
+
+Setup only touches apps that are installed, keeps everything else in those
+files, and saves a `.bak-` copy before changing one. A file it cannot read
+back exactly (JSON with comments, say) is left alone and reported.
+
+Anything else that runs local MCP servers works too. Add a stdio server with
+no arguments:
+
+```
+/Applications/iMessage MCP.app/Contents/MacOS/imessage-mcp
+```
+
+## What your agent can do
 
 | Tool | What it does |
 | --- | --- |
@@ -57,14 +85,16 @@ Updating is the same as installing; your permissions carry over.
 
 SMS, RCS and iMessage threads with the same person appear as one conversation.
 
+It cannot mark messages as read, react, edit, unsend, or send attachments.
+
 ### Group chats
 
-Groups work like any other conversation. Claude can find one by its name, or
+Groups work like any other conversation. Your agent can find one by its name, or
 by the people in it: "the group with Ana and Ben" finds the chat with exactly
 those two, which is how you reach a group that has no name.
 
 Messages lets another app send to a conversation that already exists, but not
-create a group. So when you ask Claude to text several people who are not in a
+create a group. So when you ask your agent to text several people who are not in a
 group together yet, iMessage MCP opens a new message in the Messages app with
 the people and the text filled in.
 
@@ -75,27 +105,25 @@ the people and the text filled in.
   approve the text first, the same way as any other send.
 - **Without it**, the new message waits in Messages and you press Return.
 
-macOS asks for Accessibility the first time Claude starts a group. After the
-first message the group exists and Claude sends to it directly, with no
+macOS asks for Accessibility the first time your agent starts a group. After the
+first message the group exists and your agent sends to it directly, with no
 keypress.
-
-It cannot mark messages as read, react, edit, unsend, or send attachments.
 
 ## Who approves a text
 
-`send_message` is the only tool that changes anything, and you approve it in
-Claude, the same way you approve any other connector. Claude shows the
-recipient and the exact text and asks. Click Allow and the text goes out;
-decline and nothing is sent.
+`send_message` is the only tool that changes anything, and it tells agents so:
+it is the one tool not marked read-only. An agent that asks before acting shows
+you the recipient and the exact text; click Allow and it goes out, decline and
+nothing is sent. The Claude app and Claude Code ask by default.
 
-In the Claude app each tool has its own setting: ask every time, always allow,
-or blocked. Leave `send_message` on ask every time if you want to see every
-text before it is sent. Always allow lets Claude send without asking.
+Agents differ here, and most have a mode that runs tools without asking
+(auto-run, full auto, bypass permissions, "always allow" on the tool). If yours
+does not ask, or you are not sure, set `"send": "confirm"` so iMessage MCP asks
+for itself.
 
-If you want a second check on the Mac itself, set `"send": "confirm"` in the
-options below. iMessage MCP then shows its own dialog with the recipient and
-the exact text and three buttons: Don't Send, Always Allow, Send. *Always
-Allow* remembers that conversation and skips the dialog for it next time.
+With `"send": "confirm"` in the options below, iMessage MCP shows its own
+dialog with the recipient and the exact text and three buttons: Don't Send,
+Always Allow, Send. *Always Allow* remembers that conversation and skips the dialog for it next time.
 Nothing is sent if nobody answers within five minutes.
 
 ## Options
@@ -111,10 +139,10 @@ immediately:
 ```
 
 - `allowed_chats`: when non-empty, only these conversations can be listed,
-  read, searched or sent to. Everything else is invisible to Claude. Empty
+  read, searched or sent to. Everything else is invisible to the agent. Empty
   means all conversations.
-- `send`: `"allow"` sends once you approve it in Claude (default), `"confirm"`
-  adds the dialog on your Mac, `"off"` makes it read-only.
+- `send`: `"allow"` sends once you approve it in your agent (default),
+  `"confirm"` adds the dialog on your Mac, `"off"` makes it read-only.
 - `always_allow_send`: only used with `"confirm"`. Conversations that skip the
   dialog. The Always Allow button adds to this list; delete an entry to be
   asked again.
@@ -130,9 +158,9 @@ or the identifiers `list_chats` prints.
 Texts are written by other people, and a message can contain instructions
 aimed at an AI reading it. iMessage MCP labels message content as untrusted in
 every result, but the protections that hold are your approval of each send
-and the allowlist. If you let Claude work through threads with strangers, keep
-`send_message` on ask every time in the Claude app and consider listing only
-those threads in `allowed_chats`.
+and the allowlist. If you let an agent work through threads with strangers,
+make sure it asks before each send (or use `"send": "confirm"`) and consider
+listing only those threads in `allowed_chats`.
 
 Full Disk Access is broad: it lets iMessage MCP read any file your account
 can. The app only opens the Messages database, your Contacts databases (for
@@ -149,23 +177,24 @@ which could edit it.
 ## How it works
 
 ```
-Claude app  ──stdin/stdout──▶  iMessage MCP.app
-                                 ├─ reads ~/Library/Messages/chat.db (read-only)
-                                 ├─ reads Contacts for names
-                                 ├─ sends via AppleScript to Messages
-                                 └─ new groups: presses Return in the Messages draft (Accessibility)
+your AI app  ──stdin/stdout──▶  iMessage MCP.app
+                                  ├─ reads ~/Library/Messages/chat.db (read-only)
+                                  ├─ reads Contacts for names
+                                  ├─ sends via AppleScript to Messages
+                                  └─ new groups: presses Return in the Messages draft (Accessibility)
 ```
 
-Unlike a hosted connector, there is nothing on the internet here. The Claude
-app starts iMessage MCP as a child process when it opens and talks to it over a
-pipe. It is registered in a config file on your Mac
-(`~/Library/Application Support/Claude/claude_desktop_config.json`), so it
-works in the Claude app on this Mac only, not on claude.ai or your phone.
+Unlike a hosted connector, there is nothing on the internet here. Your AI app
+starts iMessage MCP as a child process and talks to it over a pipe, so it works
+on this Mac only, not on the web or your phone.
 
-**Why it is an app and not a script.** The Claude app tells macOS it is not
-responsible for the servers it starts, so macOS checks the server's own
-executable for permissions. A script would mean giving Full Disk Access to
-`python3` or `node`, which covers every script on your Mac. A dedicated app
+**Why it is an app and not a script.** macOS checks Full Disk Access and
+Automation against the app responsible for a process, which is normally
+whatever launched it: your editor, your terminal, your agent. iMessage MCP
+relaunches itself as its own responsible process (the same thing the Claude
+app does for every server it starts), so macOS checks iMessage MCP's
+permission and nobody else's. A script could not do this; you would have to
+give Full Disk Access to `python3`, `node` or your whole editor. A dedicated app
 keeps the permission that narrow, and it shows up in System Settings with a
 name and an icon.
 
@@ -173,7 +202,7 @@ name and an icon.
 for most messages and keep the text in a binary `attributedBody` field.
 `decodeBody` in `Server.swift` pulls it out.
 
-## Use it from a shell or Claude Code
+## Use it from a shell
 
 ```sh
 alias imsg='"/Applications/iMessage MCP.app/Contents/MacOS/imessage-mcp"'
@@ -189,14 +218,8 @@ in the terminal. In a script, where there is nobody to ask, add `--yes`:
 imsg call send_message '{"chat": "Flat hunt", "text": "On my way"}' --yes
 ```
 
-To add the server to Claude Code:
-
-```sh
-claude mcp add --scope user imessage -- "/Applications/iMessage MCP.app/Contents/MacOS/imessage-mcp"
-```
-
-From a terminal, macOS checks the terminal app's permissions rather than
-iMessage MCP's, so the terminal needs Full Disk Access too.
+Agents that can run shell commands can use these too. The terminal does not
+need Full Disk Access; iMessage MCP's own switch covers it.
 
 ## Uninstall
 
@@ -204,7 +227,8 @@ iMessage MCP's, so the terminal needs Full Disk Access too.
 "/Applications/iMessage MCP.app/Contents/MacOS/imessage-mcp" uninstall
 ```
 
-Then move the app to the Trash. Your options file is left in place.
+This disconnects every app setup connected. Then move the app to the Trash.
+Your options file is left in place.
 
 ## Build from source
 
@@ -212,7 +236,7 @@ Needs Xcode or the Swift toolchain.
 
 ```sh
 swift test                    # runs against a throwaway database
-scripts/build.sh --install    # build, copy to /Applications, connect to Claude
+scripts/build.sh --install    # build, copy to /Applications, connect your AI apps
 ```
 
 Without a Developer ID certificate the build is signed ad hoc, which works for

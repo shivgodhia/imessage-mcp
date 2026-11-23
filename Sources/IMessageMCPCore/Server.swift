@@ -196,7 +196,7 @@ public final class Server {
             throw ToolError(
                 "Cannot open \(environment.chatDB) (\(error.message)). macOS is blocking it. In System "
                 + "Settings > Privacy & Security > Full Disk Access, turn on iMessage MCP, then "
-                + "quit Claude with Cmd+Q and reopen it. Turning on Claude itself does not help: "
+                + "restart the app you are using. Turning it on for that app or for Terminal does not help: "
                 + "the permission has to be on iMessage MCP.")
         }
     }
@@ -904,7 +904,7 @@ public final class Server {
     /// `shellApproval`: set when run from the command line rather than by an MCP
     /// client. It is shown the text and recipient and says whether to send.
     ///
-    /// An MCP client (the Claude app) asks the user to approve a send before it
+    /// An MCP client (Claude, Cursor, Codex, ...) asks the user to approve a send before it
     /// calls the tool. A shell has no such prompt, so the command line asks there.
     public func call(
         _ name: String, _ args: [String: Any],
