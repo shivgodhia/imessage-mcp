@@ -92,10 +92,14 @@ public final class LiveBridge: SystemBridge {
         return "imessage://open?addresses=" + recipients.map(escape).joined(separator: ",") + "&body=" + escape(text)
     }
 
-    public func compose(recipients: [String], text: String) -> (ok: Bool, output: String) {
+    public func compose(recipients: [String], text: String, pressReturn: Bool) -> ComposeResult {
+        if pressReturn { return composeAndPressReturn(recipients: recipients, text: text) }
         let link = LiveBridge.composeLink(recipients: recipients, text: text)
         let result = runProcess("/usr/bin/open", ["-a", "Messages", link], input: "", timeout: 20)
-        return (result.status == 0 && !result.timedOut, result.output)
+        if result.status != 0 || result.timedOut {
+            return .failed("Could not open a new message in Messages. \(result.output)")
+        }
+        return .draft("")
     }
 
     /// Runs `work` on a worker thread, exits when it returns, and leaves the main

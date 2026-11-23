@@ -135,6 +135,16 @@ let untrustedNotice =
 
 // MARK: - What the server needs from the Mac
 
+/// What happened to a new group message.
+public enum ComposeResult: Equatable {
+    /// Return was pressed in the draft and Messages took the text.
+    case sent
+    /// The draft is open in Messages for the user to send; the reason Return was not pressed, if it was tried.
+    case draft(String)
+    /// No draft could be opened.
+    case failed(String)
+}
+
 public enum ConfirmAnswer: Equatable {
     case send
     case alwaysAllow
@@ -148,9 +158,11 @@ public protocol SystemBridge {
     func confirm(text: String, recipient: String) -> ConfirmAnswer
     /// Asks Messages to send. `mode` is "chat" (target is a chat guid), "imessage" or "sms".
     func send(text: String, target: String, mode: String) -> (ok: Bool, output: String)
-    /// Opens a new message in Messages addressed to `recipients` with `text` typed in.
-    /// Nothing is sent: the user presses Return.
-    func compose(recipients: [String], text: String) -> (ok: Bool, output: String)
+    /// Whether iMessage MCP may press keys in Messages (the Accessibility permission).
+    func canPressReturn() -> Bool
+    /// Opens a new message in Messages addressed to `recipients` with `text` typed in,
+    /// and with `pressReturn` sends it once the window shows exactly that.
+    func compose(recipients: [String], text: String, pressReturn: Bool) -> ComposeResult
 }
 
 public typealias ToolContent = [[String: Any]]
@@ -679,7 +691,7 @@ public final class Server {
                 throw ToolError("\"\(ref)\" is not in allowed_chats in \(environment.configPath).")
             }
             if let people = people(in: ref) {
-                return try startGroup(db, people, text: text)
+                return try startGroup(db, people, text: text, config: config, shellApproval: shellApproval)
             }
             if !looksLikeAddress(ref) {
                 throw ToolError(
@@ -786,9 +798,14 @@ public final class Server {
     }
 
     /// Messages lets another app send to a conversation that exists, but not
-    /// create a group. So a new group is a draft: the people and the text are
-    /// filled in, and the user sends it.
-    func startGroup(_ db: Database, _ people: [String], text: String) throws -> ToolContent {
+    /// create a group. So a new group starts as a new-message window with the
+    /// people and the text filled in. With the Accessibility permission
+    /// iMessage MCP presses Return in it, after the same approval as any other
+    /// send; without it the user sends the draft.
+    func startGroup(
+        _ db: Database, _ people: [String], text: String, config: Config,
+        shellApproval: ((_ text: String, _ recipient: String) -> Bool)?
+    ) throws -> ToolContent {
         var addresses: [String] = []
         for person in people {
             let address = try address(db, for: person)
@@ -797,30 +814,57 @@ public final class Server {
         if addresses.count < 2 { throw ToolError("A group needs at least two different people.") }
         let shown = addresses.map { address in name(for: address).map { "\($0) (\(address))" } ?? address }
         let recipient = "new group (\(shown.joined(separator: ", ")))"
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let before = try wrap { try db.query("select coalesce(max(ROWID), 0) from message") }[0][0].int
 
-        let opened = bridge.compose(recipients: addresses, text: text)
-        if !opened.ok {
-            throw ToolError("Could not open a new message in Messages. \(opened.output)")
+        let press = bridge.canPressReturn()
+        var remember = false
+        if press {
+            if let shellApproval = shellApproval {
+                if !shellApproval(text, recipient) { throw ToolError("Not sent.") }
+            } else if config.send == "confirm" {
+                switch bridge.confirm(text: text, recipient: recipient) {
+                case .send: break
+                case .alwaysAllow: remember = true
+                case .dontSend: throw ToolError("Not sent: the user declined it in the confirmation dialog.")
+                case .timedOut: throw ToolError("Not sent: nobody answered the confirmation dialog on the Mac.")
+                }
+            }
         }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let row = try sentRow(after: before, text: trimmed, wait: composeWait, recipient: recipient) {
+
+        let outcome = bridge.compose(recipients: addresses, text: text, pressReturn: press)
+        if case .failed(let why) = outcome { throw ToolError(why) }
+        var reason = ""
+        if case .draft(let why) = outcome { reason = why }
+        let pressed = outcome == .sent
+        let wait = pressed ? sendWait : composeWait
+        if let row = try sentRow(after: before, text: trimmed, wait: wait, recipient: recipient) {
             let chat = try wrap {
                 try db.query(
                     "select c.chat_identifier from chat_message_join j join chat c on c.ROWID = j.chat_id "
                         + "where j.message_id = ?", [.int(row.id)])
             }.first?[0].string
+            if remember, let chat = chat { try Config.rememberAlwaysAllow(chat, path: environment.configPath) }
+            let how = pressed ? "" : ": the user pressed Return on the draft"
             let next = chat.map { " The group is now conversation \($0): use that for the next message." } ?? ""
             return Server.text(
-                "Sent to \(recipient) via \(row.service) (message \(row.id), \(row.state)): the user "
-                    + "pressed Return on the draft.\(next)")
+                "Sent to \(recipient) via \(row.service) (message \(row.id), \(row.state))\(how).\(next)")
         }
+        if pressed {
+            return Server.text(
+                "Return was pressed in Messages for \(recipient), but the text has not shown as sent yet. "
+                    + "Check list_chats or read_chat before telling the user it was sent, and do not "
+                    + "resend without checking.")
+        }
+        let why = reason.isEmpty ? "" : " It was not sent automatically: \(reason)."
+        let enable = press ? "" : " To send new groups without the keypress, switch on iMessage MCP in System "
+            + "Settings > Privacy & Security > Accessibility."
         return Server.text(
             "NOT SENT YET. A new message to \(recipient) is open in the Messages app on the Mac with "
-                + "the text typed in. Messages does not let another app create a group, so the user has "
-                + "to press Return there to send it. Tell them that. Do not say it was sent, and do not "
-                + "call send_message again for this (it would open a second draft). Once they have sent "
-                + "it the group shows up in list_chats and later messages go straight through.")
+                + "the text typed in. The user has to press Return there to send it. Tell them that. Do not "
+                + "say it was sent, and do not call send_message again for this (it would open a second "
+                + "draft).\(why) Once they have sent it the group shows up in list_chats and later messages "
+                + "go straight through.\(enable)")
     }
 
     func getAttachment(_ args: [String: Any]) throws -> ToolContent {

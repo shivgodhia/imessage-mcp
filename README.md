@@ -63,12 +63,21 @@ Groups work like any other conversation. Claude can find one by its name, or
 by the people in it: "the group with Ana and Ben" finds the chat with exactly
 those two, which is how you reach a group that has no name.
 
-Starting a new group takes one keypress from you. Messages lets another app
-send to a conversation that already exists, but not create a group. So when
-you ask Claude to text several people who are not in a group together yet,
-iMessage MCP opens a new message in the Messages app with the people and the
-text filled in, and you press Return to send it. After that the group exists
-and Claude can send to it directly.
+Messages lets another app send to a conversation that already exists, but not
+create a group. So when you ask Claude to text several people who are not in a
+group together yet, iMessage MCP opens a new message in the Messages app with
+the people and the text filled in.
+
+- **With the Accessibility permission** (System Settings > Privacy & Security >
+  Accessibility > iMessage MCP), it checks that the new message has exactly
+  those people and that text, presses Return, and switches back to the app you
+  were in. Messages comes to the front for a few seconds while this happens. You
+  approve the text first, the same way as any other send.
+- **Without it**, the new message waits in Messages and you press Return.
+
+macOS asks for Accessibility the first time Claude starts a group. After the
+first message the group exists and Claude sends to it directly, with no
+keypress.
 
 It cannot mark messages as read, react, edit, unsend, or send attachments.
 
@@ -130,6 +139,10 @@ can. The app only opens the Messages database, your Contacts databases (for
 names), and attachments you ask for. It opens them read-only and never
 connects to the network; the source is here to check.
 
+Accessibility is optional and also broad: it lets an app read and press keys
+in other apps. iMessage MCP only uses it to read the new-message window in
+Messages and press Return there, and only when starting a new group chat.
+
 The options file is not a barrier against other software running as you,
 which could edit it.
 
@@ -139,7 +152,8 @@ which could edit it.
 Claude app  ──stdin/stdout──▶  iMessage MCP.app
                                  ├─ reads ~/Library/Messages/chat.db (read-only)
                                  ├─ reads Contacts for names
-                                 └─ sends via AppleScript to Messages
+                                 ├─ sends via AppleScript to Messages
+                                 └─ new groups: presses Return in the Messages draft (Accessibility)
 ```
 
 Unlike a hosted connector, there is nothing on the internet here. The Claude

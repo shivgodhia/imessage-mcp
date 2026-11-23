@@ -80,9 +80,10 @@ let toolSpecs: [ToolSpec] = [
             "chat": property(
                 "string",
                 chatArgument + " A phone number or email with no existing conversation starts a new one. "
-                    + "Several people with no group yet cannot be sent to directly: it opens a new "
-                    + "group message in the Messages app with the text typed in, and the user "
-                    + "sends it by pressing Return. The result says which happened."),
+                    + "Several people with no group yet start a new group: Messages opens a new "
+                    + "message to them with the text typed in, and iMessage MCP sends it if it has "
+                    + "the Accessibility permission. Otherwise the user presses Return to send it. "
+                    + "The result says which happened."),
             "text": property("string", "The message, exactly as it should be sent."),
         ], required: ["chat", "text"]),
         readOnly: false),

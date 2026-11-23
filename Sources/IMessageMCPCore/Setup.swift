@@ -117,6 +117,8 @@ public enum Setup {
                 "Quit Claude with Cmd+Q and reopen it, then ask Claude about your texts.\n\n"
                     + "The first time Claude sends a text, macOS asks whether iMessage MCP may "
                     + "control Messages. Click Allow.\n\n"
+                    + "Optional: switch on iMessage MCP under Privacy & Security > Accessibility "
+                    + "so Claude can start new group chats without you pressing Return.\n\n"
                     + "Claude asks before it sends anything.",
                 buttons: ["Done"])
         } else {

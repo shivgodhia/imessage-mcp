@@ -67,6 +67,9 @@ case "setup":
         print("")
         print("The first time Claude sends a text, macOS asks whether iMessage MCP may")
         print("control Messages. Click Allow.")
+        print("")
+        print("Optional: switch on iMessage MCP under Privacy & Security > Accessibility too, so")
+        print("Claude can start a new group chat without you pressing Return in Messages.")
         if !arguments.contains("--no-open") {
             let open = Process()
             open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -100,6 +103,9 @@ case "check":
         let counts = try server.messageCount()
         print("messages database: ok, \(counts.messages) messages, \(counts.conversations) conversations")
         print("contacts: \(server.contactCount()) numbers and emails with names")
+        print(LiveBridge.accessibilityAllowed()
+            ? "accessibility: on, new group chats are sent automatically"
+            : "accessibility: off, new group chats open as a draft for you to send")
     } catch let error as ToolError {
         print("messages database: FAILED\n  \(error.message)")
         exit(1)

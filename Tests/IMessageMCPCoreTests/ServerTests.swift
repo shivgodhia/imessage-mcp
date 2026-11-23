@@ -10,15 +10,18 @@ final class FakeBridge: SystemBridge {
     var sendResults: [(ok: Bool, output: String)] = []
     var confirms: [(text: String, recipient: String)] = []
     var sends: [(text: String, target: String, mode: String)] = []
-    var composes: [(recipients: [String], text: String)] = []
-    var composeResult: (ok: Bool, output: String) = (true, "")
-    /// Runs when a draft is opened, to play the user pressing Return.
+    var composes: [(recipients: [String], text: String, pressReturn: Bool)] = []
+    var accessibility = false
+    var composeResult: ComposeResult?
+    /// Runs when a draft is opened, to play Messages sending it.
     var onCompose: (() -> Void)?
 
-    func compose(recipients: [String], text: String) -> (ok: Bool, output: String) {
-        composes.append((recipients, text))
+    func canPressReturn() -> Bool { accessibility }
+
+    func compose(recipients: [String], text: String, pressReturn: Bool) -> ComposeResult {
+        composes.append((recipients, text, pressReturn))
         onCompose?()
-        return composeResult
+        return composeResult ?? (pressReturn ? .sent : .draft(""))
     }
 
     func confirm(text: String, recipient: String) -> ConfirmAnswer {
@@ -320,7 +323,8 @@ final class SendTests: Fixture {
             let onSend: () -> Void
             init(_ onSend: @escaping () -> Void) { self.onSend = onSend }
             func confirm(text: String, recipient: String) -> ConfirmAnswer { .dontSend }
-            func compose(recipients: [String], text: String) -> (ok: Bool, output: String) { (false, "") }
+            func canPressReturn() -> Bool { false }
+            func compose(recipients: [String], text: String, pressReturn: Bool) -> ComposeResult { .failed("") }
             func send(text: String, target: String, mode: String) -> (ok: Bool, output: String) {
                 onSend()
                 return (true, "")
@@ -340,7 +344,8 @@ final class SendTests: Fixture {
             let onSend: () -> Void
             init(_ onSend: @escaping () -> Void) { self.onSend = onSend }
             func confirm(text: String, recipient: String) -> ConfirmAnswer { .dontSend }
-            func compose(recipients: [String], text: String) -> (ok: Bool, output: String) { (false, "") }
+            func canPressReturn() -> Bool { false }
+            func compose(recipients: [String], text: String, pressReturn: Bool) -> ComposeResult { .failed("") }
             func send(text: String, target: String, mode: String) -> (ok: Bool, output: String) {
                 onSend()
                 return (true, "")
@@ -667,7 +672,7 @@ final class GroupTests: Fixture {
     }
 
     func testDraftThatFailsToOpenIsAnError() {
-        bridge.composeResult = (false, "no Messages")
+        bridge.composeResult = .failed("no Messages")
         XCTAssertThrowsError(try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"]))
     }
 
@@ -675,5 +680,91 @@ final class GroupTests: Fixture {
         XCTAssertEqual(
             LiveBridge.composeLink(recipients: ["+15559990001", "new@example.com"], text: "8pm? a&b"),
             "imessage://open?addresses=%2B15559990001,new@example.com&body=8pm%3F%20a%26b")
+    }
+
+    // MARK: With the Accessibility permission
+
+    func sentGroupRow(_ text: String) {
+        execute("insert into chat values (9, 'iMessage;+;chat999', 43, 'chat999', null)")
+        insertMessage(7, text: nil, blob: body(text), minutesAgo: 0, mine: true, handle: 0, chat: 9, read: true)
+        execute("update message set is_sent = 1, service = 'iMessage' where ROWID = 7")
+    }
+
+    func testWithAccessibilityANewGroupIsSentForTheUser() throws {
+        bridge.accessibility = true
+        server.sendWait = 2
+        bridge.onCompose = { [self] in sentGroupRow("dinner at 8?") }
+        let out = try call("send_message", ["chat": "+15559990001, new@example.com", "text": "dinner at 8?"])
+        XCTAssertEqual(bridge.composes.count, 1)
+        XCTAssertTrue(bridge.composes[0].pressReturn)
+        XCTAssertTrue(out.contains("via iMessage (message 7, sent)."), out)
+        XCTAssertFalse(out.contains("pressed Return on the draft"))
+        XCTAssertTrue(out.contains("conversation chat999"))
+    }
+
+    func testWithAccessibilityTheSendDialogStillAsks() throws {
+        bridge.accessibility = true
+        configure(["send": "confirm"])
+        bridge.confirmAnswers = [.dontSend]
+        XCTAssertThrowsError(try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"]))
+        XCTAssertEqual(bridge.confirms.count, 1)
+        XCTAssertTrue(bridge.confirms[0].recipient.hasPrefix("new group ("))
+        XCTAssertTrue(bridge.composes.isEmpty)
+    }
+
+    func testAlwaysAllowOnANewGroupRemembersTheGroupOnceItExists() throws {
+        bridge.accessibility = true
+        configure(["send": "confirm"])
+        server.sendWait = 2
+        bridge.confirmAnswers = [.alwaysAllow]
+        bridge.onCompose = { [self] in sentGroupRow("hi") }
+        try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"])
+        XCTAssertEqual(try Config.load(configPath).alwaysAllowSend, ["chat999"])
+    }
+
+    func testWithAccessibilityAShellSendAsksInTheShell() throws {
+        bridge.accessibility = true
+        var asked: [String] = []
+        XCTAssertThrowsError(
+            try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"]) { _, recipient in
+                asked.append(recipient)
+                return false
+            })
+        XCTAssertEqual(asked.count, 1)
+        XCTAssertTrue(bridge.composes.isEmpty)
+    }
+
+    func testWhenTheKeypressIsNotSafeItLeavesTheDraftAndSaysWhy() throws {
+        bridge.accessibility = true
+        server.composeWait = 0
+        bridge.composeResult = .draft("the Messages window lost focus before Return could be pressed")
+        let out = try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"])
+        XCTAssertTrue(out.hasPrefix("NOT SENT YET"))
+        XCTAssertTrue(out.contains("lost focus"))
+        XCTAssertFalse(out.contains("Accessibility"))
+    }
+
+    func testWithoutAccessibilityTheDraftSaysHowToTurnItOn() throws {
+        server.composeWait = 0
+        let out = try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"])
+        XCTAssertFalse(bridge.composes[0].pressReturn)
+        XCTAssertTrue(out.contains("Privacy & Security > Accessibility"))
+    }
+
+    func testPressedButNotRecordedDoesNotClaimSent() throws {
+        bridge.accessibility = true
+        server.sendWait = 0
+        let out = try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"])
+        XCTAssertTrue(out.contains("has not shown as sent yet"))
+    }
+
+    func testRecipientTokensMustMatchExactly() {
+        let tokens = ["Ana Ruiz, +15551230001", "new@example.com, Not registered"]
+        XCTAssertTrue(LiveBridge.tokensMatch(tokens, ["+1 (555) 123-0001", "new@example.com"]))
+        XCTAssertTrue(LiveBridge.tokensMatch(tokens.reversed(), ["+15551230001", "NEW@example.com"]))
+        XCTAssertFalse(LiveBridge.tokensMatch(tokens, ["+15551230001"]))
+        XCTAssertFalse(LiveBridge.tokensMatch(tokens, ["+15551230001", "other@example.com"]))
+        XCTAssertFalse(LiveBridge.tokensMatch(tokens + ["+15551230002"], ["+15551230001", "new@example.com"]))
+        XCTAssertFalse(LiveBridge.tokensMatch(["+15551230001", "+15551230001"], ["+15551230001", "new@example.com"]))
     }
 }
