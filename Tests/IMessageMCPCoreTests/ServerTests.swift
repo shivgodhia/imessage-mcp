@@ -496,11 +496,16 @@ final class ProtocolTests: Fixture {
 }
 
 final class SetupTests: Fixture {
+    let exe = "/Applications/iMessage MCP.app/Contents/MacOS/imessage-mcp"
     var claude: String { directory.appendingPathComponent("claude_desktop_config.json").path }
-
-    func read() -> [String: Any] {
-        try! JSONSerialization.jsonObject(with: FileManager.default.contents(atPath: claude)!) as! [String: Any]
+    var claudeClient: Client {
+        Client(name: "Claude", configPath: claude, format: .json(key: "mcpServers", typed: false), restart: "")
     }
+
+    func read(_ path: String) -> [String: Any] {
+        try! JSONSerialization.jsonObject(with: FileManager.default.contents(atPath: path)!) as! [String: Any]
+    }
+    func text(_ path: String) -> String { String(decoding: FileManager.default.contents(atPath: path)!, as: UTF8.self) }
 
     func testRegisterKeepsEverythingElseAndIsIdempotent() throws {
         let original: [String: Any] = [
@@ -508,35 +513,71 @@ final class SetupTests: Fixture {
             "mcpServers": ["other": ["command": "/bin/other", "args": ["x"]]],
         ]
         try JSONSerialization.data(withJSONObject: original).write(to: URL(fileURLWithPath: claude))
-        XCTAssertTrue(try Setup.register(executable: "/Applications/iMessage MCP.app/Contents/MacOS/imessage-mcp", claudeConfig: claude))
-        XCTAssertFalse(try Setup.register(executable: "/Applications/iMessage MCP.app/Contents/MacOS/imessage-mcp", claudeConfig: claude))
-        let json = read()
+        XCTAssertEqual(Clients.register(claudeClient, executable: exe), .added)
+        XCTAssertEqual(Clients.register(claudeClient, executable: exe), .unchanged)
+        let json = read(claude)
         let servers = json["mcpServers"] as! [String: Any]
-        XCTAssertEqual((servers["imessage"] as! [String: Any])["command"] as? String, "/Applications/iMessage MCP.app/Contents/MacOS/imessage-mcp")
+        XCTAssertEqual((servers["imessage"] as! [String: Any])["command"] as? String, exe)
         XCTAssertEqual((servers["other"] as! [String: Any])["command"] as? String, "/bin/other")
-        let preferences = json["preferences"] as! [String: Any]
-        XCTAssertEqual(preferences["menuBarEnabled"] as? Bool, false)
-        XCTAssertEqual(preferences["sidebarMode"] as? String, "chat")
+        XCTAssertEqual((json["preferences"] as! [String: Any])["sidebarMode"] as? String, "chat")
         let backups = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.contains(".bak-") }
         XCTAssertEqual(backups.count, 1)
+        XCTAssertEqual(Clients.register(claudeClient, executable: "/moved/imessage-mcp"), .updated)
     }
 
-    func testRegisterCreatesAMissingConfig() throws {
-        XCTAssertTrue(try Setup.register(executable: "/x/imessage-mcp", claudeConfig: claude))
-        XCTAssertNotNil((read()["mcpServers"] as! [String: Any])["imessage"])
+    func testRegisterCreatesAMissingOrEmptyConfig() throws {
+        XCTAssertEqual(Clients.register(claudeClient, executable: "/x/imessage-mcp"), .added)
+        XCTAssertNotNil((read(claude)["mcpServers"] as! [String: Any])["imessage"])
+        let vscode = directory.appendingPathComponent("mcp.json").path
+        try Data("\n".utf8).write(to: URL(fileURLWithPath: vscode))
+        let client = Client(name: "VS Code", configPath: vscode, format: .json(key: "servers", typed: true), restart: "")
+        XCTAssertEqual(Clients.register(client, executable: "/x/imessage-mcp"), .added)
+        let entry = (read(vscode)["servers"] as! [String: Any])["imessage"] as! [String: Any]
+        XCTAssertEqual(entry["type"] as? String, "stdio")
     }
 
     func testUnregister() throws {
-        try Setup.register(executable: "/x/imessage-mcp", claudeConfig: claude)
-        XCTAssertTrue(try Setup.unregister(claudeConfig: claude))
-        XCTAssertNil(read()["mcpServers"])
-        XCTAssertFalse(try Setup.unregister(claudeConfig: claude))
+        _ = Clients.register(claudeClient, executable: "/x/imessage-mcp")
+        XCTAssertEqual(Clients.unregister(claudeClient), .removed)
+        XCTAssertNil(read(claude)["mcpServers"])
+        XCTAssertEqual(Clients.unregister(claudeClient), .absent)
     }
 
     func testUnreadableConfigIsLeftAlone() throws {
-        try Data("{not json".utf8).write(to: URL(fileURLWithPath: claude))
-        XCTAssertThrowsError(try Setup.register(executable: "/x/imessage-mcp", claudeConfig: claude))
-        XCTAssertEqual(String(decoding: FileManager.default.contents(atPath: claude)!, as: UTF8.self), "{not json")
+        try Data("{ // comment\n}".utf8).write(to: URL(fileURLWithPath: claude))
+        guard case .failed = Clients.register(claudeClient, executable: "/x/imessage-mcp") else {
+            return XCTFail("should not write")
+        }
+        XCTAssertEqual(text(claude), "{ // comment\n}")
+    }
+
+    func testCodexTOMLKeepsTheRestOfTheFile() throws {
+        let path = directory.appendingPathComponent("config.toml").path
+        let original = "model = \"x\"\n\n[mcp_servers.other]\ncommand = \"/bin/other\"\n\n[projects.\"/a\"]\ntrust_level = \"trusted\"\n"
+        try Data(original.utf8).write(to: URL(fileURLWithPath: path))
+        let codex = Client(name: "Codex", configPath: path, format: .codexTOML, restart: "")
+        XCTAssertEqual(Clients.register(codex, executable: exe), .added)
+        XCTAssertEqual(Clients.register(codex, executable: exe), .unchanged)
+        XCTAssertTrue(text(path).hasPrefix(original))
+        XCTAssertTrue(text(path).contains("[mcp_servers.imessage]\ncommand = \"\(exe)\"\nargs = []\n"))
+        XCTAssertEqual(Clients.register(codex, executable: "/moved/imessage-mcp"), .updated)
+        XCTAssertEqual(text(path).components(separatedBy: "[mcp_servers.imessage]").count, 2)
+        XCTAssertEqual(Clients.unregister(codex), .removed)
+        XCTAssertEqual(text(path), original)
+        XCTAssertEqual(Clients.unregister(codex), .absent)
+    }
+
+    func testFindsOnlyInstalledClients() throws {
+        let home = directory.appendingPathComponent("home").path
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: home + "/.cursor", withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: home + "/.codex", withIntermediateDirectories: true)
+        let names = Clients.installed(home: home).map(\.name).filter { $0 != "Claude" }  // /Applications/Claude.app may exist
+        XCTAssertEqual(names, ["Codex", "Cursor"])
+        let results = Setup.registerAll(executable: exe, home: home)
+        XCTAssertTrue(results.allSatisfy { $0.change == .added })
+        XCTAssertNotNil((read(home + "/.cursor/mcp.json")["mcpServers"] as! [String: Any])["imessage"])
+        XCTAssertTrue(text(home + "/.codex/config.toml").contains("[mcp_servers.imessage]"))
     }
 
     func testDefaultOptionsLeaveAskingToClaude() throws {

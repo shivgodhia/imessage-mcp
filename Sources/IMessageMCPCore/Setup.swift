@@ -1,63 +1,24 @@
 import AppKit
 import Foundation
 
-/// Connecting iMessage MCP to the Claude Mac app.
+/// Connecting iMessage MCP to the AI apps on this Mac.
 public enum Setup {
-    public static let serverName = "imessage"
+    public static let serverName = Clients.serverName
     public static let fullDiskAccessURL =
         "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
-    public static var claudeConfigPath: String {
-        NSHomeDirectory() + "/Library/Application Support/Claude/claude_desktop_config.json"
+
+    public struct Result {
+        public let client: Client
+        public let change: ClientChange
     }
 
-    static func readClaudeConfig(_ path: String) throws -> [String: Any] {
-        guard let data = FileManager.default.contents(atPath: path), !data.isEmpty else { return [:] }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            // Never overwrite a file we cannot read back.
-            throw ToolError("The Claude config at \(path) is not valid JSON, so it was left alone.")
-        }
-        return json
+    /// Adds this executable to every installed MCP client.
+    public static func registerAll(executable: String, home: String = Clients.home) -> [Result] {
+        Clients.installed(home: home).map { Result(client: $0, change: Clients.register($0, executable: executable)) }
     }
 
-    static func backUp(_ path: String) {
-        guard FileManager.default.fileExists(atPath: path) else { return }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        try? FileManager.default.copyItem(atPath: path, toPath: path + ".bak-" + formatter.string(from: Date()))
-    }
-
-    /// Points the Claude app at this executable. Returns true if the config changed.
-    @discardableResult
-    public static func register(executable: String, claudeConfig: String? = nil) throws -> Bool {
-        let path = claudeConfig ?? claudeConfigPath
-        var json = try readClaudeConfig(path)
-        var servers = (json["mcpServers"] as? [String: Any]) ?? [:]
-        if let existing = servers[serverName] as? [String: Any],
-           existing["command"] as? String == executable,
-           ((existing["args"] as? [Any]) ?? []).isEmpty {
-            return false
-        }
-        servers[serverName] = ["command": executable, "args": [String]()] as [String: Any]
-        json["mcpServers"] = servers
-        backUp(path)
-        try writeJSON(json, to: path)
-        return true
-    }
-
-    /// Removes this server from the Claude app's config. Returns true if it was there.
-    @discardableResult
-    public static func unregister(claudeConfig: String? = nil) throws -> Bool {
-        let path = claudeConfig ?? claudeConfigPath
-        var json = try readClaudeConfig(path)
-        guard var servers = json["mcpServers"] as? [String: Any], servers[serverName] != nil else {
-            return false
-        }
-        servers[serverName] = nil
-        json["mcpServers"] = servers.isEmpty ? nil : servers
-        backUp(path)
-        try writeJSON(json, to: path)
-        return true
+    public static func unregisterAll(home: String = Clients.home) -> [Result] {
+        Clients.installed(home: home).map { Result(client: $0, change: Clients.unregister($0)) }
     }
 
     /// Versions before 1.0 kept a Python server in ~/.local/share/imessage-mcp.
@@ -89,7 +50,7 @@ public enum Setup {
         return alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
     }
 
-    /// What happens when the app is double-clicked: connect to Claude and say what is left.
+    /// What happens when the app is double-clicked: connect the AI apps and say what is left.
     public static func runInteractive(server: Server) -> Never {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -101,8 +62,8 @@ public enum Setup {
                 buttons: ["OK"])
             exit(0)
         }
+        let results = registerAll(executable: executablePath())
         do {
-            try register(executable: executablePath())
             try Config.createDefaultIfMissing(server.environment.configPath)
             removeLegacyInstall()
         } catch {
@@ -110,23 +71,33 @@ public enum Setup {
             _ = alert("iMessage MCP could not finish setting up", message, buttons: ["OK"])
             exit(1)
         }
+        let connected = results.filter { if case .failed = $0.change { return false }; return true }
+        let failed = results.compactMap { result -> String? in
+            if case let .failed(why) = result.change { return "\(result.client.name): \(why)" }
+            return nil
+        }
+        var connectedText: String
+        if connected.isEmpty {
+            connectedText = "No AI app was found to connect automatically. Add this to your app's MCP "
+                + "servers as a local (stdio) server:\n\n\(executablePath())"
+        } else {
+            connectedText = "Connected to " + connected.map(\.client.name).joined(separator: ", ")
+                + ". Restart them to load it."
+        }
+        if !failed.isEmpty { connectedText += "\n\nNot connected:\n" + failed.joined(separator: "\n") }
 
         if (try? server.messageCount()) != nil {
             _ = alert(
                 "iMessage MCP is ready",
-                "Quit Claude with Cmd+Q and reopen it, then ask Claude about your texts.\n\n"
-                    + "The first time Claude sends a text, macOS asks whether iMessage MCP may "
-                    + "control Messages. Click Allow.\n\n"
-                    + "Claude asks before it sends anything.",
+                connectedText + "\n\nThe first time a text is sent, macOS asks whether iMessage MCP may "
+                    + "control Messages. Click Allow.",
                 buttons: ["Done"])
         } else {
             let choice = alert(
                 "One switch left",
-                "iMessage MCP is now connected to the Claude app. macOS needs your permission "
-                    + "before it can read your messages:\n\n"
-                    + "1. Click Open Settings and switch on iMessage MCP under Full Disk Access.\n"
-                    + "2. Quit Claude with Cmd+Q and reopen it.\n\n"
-                    + "Everything stays on this Mac. Claude asks before it sends anything.",
+                connectedText + "\n\nmacOS needs your permission before iMessage MCP can read your "
+                    + "messages. Click Open Settings and switch on iMessage MCP under Full Disk Access. "
+                    + "That one switch covers every app above.\n\nEverything stays on this Mac.",
                 buttons: ["Open Settings", "Later"])
             if choice == 0, let url = URL(string: fullDiskAccessURL) {
                 NSWorkspace.shared.open(url)
