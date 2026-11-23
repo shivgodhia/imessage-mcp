@@ -90,7 +90,9 @@ public enum Setup {
             _ = alert(
                 "iMessage MCP is ready",
                 connectedText + "\n\nThe first time a text is sent, macOS asks whether iMessage MCP may "
-                    + "control Messages. Click Allow.",
+                    + "control Messages. Click Allow.\n\n"
+                    + "Optional: switch on iMessage MCP under Privacy & Security > Accessibility "
+                    + "so new group chats can be sent without you pressing Return.",
                 buttons: ["Done"])
         } else {
             let choice = alert(

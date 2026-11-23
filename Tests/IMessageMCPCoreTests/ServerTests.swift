@@ -10,6 +10,19 @@ final class FakeBridge: SystemBridge {
     var sendResults: [(ok: Bool, output: String)] = []
     var confirms: [(text: String, recipient: String)] = []
     var sends: [(text: String, target: String, mode: String)] = []
+    var composes: [(recipients: [String], text: String, pressReturn: Bool)] = []
+    var accessibility = false
+    var composeResult: ComposeResult?
+    /// Runs when a draft is opened, to play Messages sending it.
+    var onCompose: (() -> Void)?
+
+    func canPressReturn() -> Bool { accessibility }
+
+    func compose(recipients: [String], text: String, pressReturn: Bool) -> ComposeResult {
+        composes.append((recipients, text, pressReturn))
+        onCompose?()
+        return composeResult ?? (pressReturn ? .sent : .draft(""))
+    }
 
     func confirm(text: String, recipient: String) -> ConfirmAnswer {
         confirms.append((text, recipient))
@@ -310,6 +323,8 @@ final class SendTests: Fixture {
             let onSend: () -> Void
             init(_ onSend: @escaping () -> Void) { self.onSend = onSend }
             func confirm(text: String, recipient: String) -> ConfirmAnswer { .dontSend }
+            func canPressReturn() -> Bool { false }
+            func compose(recipients: [String], text: String, pressReturn: Bool) -> ComposeResult { .failed("") }
             func send(text: String, target: String, mode: String) -> (ok: Bool, output: String) {
                 onSend()
                 return (true, "")
@@ -329,6 +344,8 @@ final class SendTests: Fixture {
             let onSend: () -> Void
             init(_ onSend: @escaping () -> Void) { self.onSend = onSend }
             func confirm(text: String, recipient: String) -> ConfirmAnswer { .dontSend }
+            func canPressReturn() -> Bool { false }
+            func compose(recipients: [String], text: String, pressReturn: Bool) -> ComposeResult { .failed("") }
             func send(text: String, target: String, mode: String) -> (ok: Bool, output: String) {
                 onSend()
                 return (true, "")
@@ -583,5 +600,212 @@ final class SetupTests: Fixture {
     func testDefaultOptionsLeaveAskingToClaude() throws {
         try Config.createDefaultIfMissing(configPath)
         XCTAssertEqual(try Config.load(configPath).send, "allow")
+    }
+}
+
+final class GroupTests: Fixture {
+    /// Ana (+15551230001), Ben (+15551230002), and Cy with two numbers and no conversation.
+    func addContacts() {
+        let book = directory.appendingPathComponent("contacts.db").path
+        var handle: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(book, &handle), SQLITE_OK)
+        let sql = """
+            create table ZABCDRECORD (Z_PK integer primary key, ZFIRSTNAME text, ZLASTNAME text, ZORGANIZATION text);
+            create table ZABCDPHONENUMBER (ZOWNER integer, ZFULLNUMBER text);
+            create table ZABCDEMAILADDRESS (ZOWNER integer, ZADDRESS text);
+            insert into ZABCDRECORD values (1, 'Ana', 'Ruiz', null), (2, 'Ben', 'Okafor', null),
+                (3, 'Cy', 'Tran', null), (4, 'Dee', 'Park', null);
+            insert into ZABCDPHONENUMBER values (1, '(555) 123-0001'), (2, '+1 555 123 0002'),
+                (3, '+1 555 777 0001'), (3, '+1 555 777 0002'), (4, '+1 (555) 888-0001');
+            """
+        XCTAssertEqual(sqlite3_exec(handle, sql, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(handle)
+        server.environment = Environment(chatDB: dbPath, configPath: configPath, addressBooks: { [book] })
+    }
+
+    func addUnnamedGroup() {
+        execute("insert into chat values (5, 'iMessage;+;chat888', 43, 'chat888', null)")
+        execute("insert into chat_handle_join values (5, 2), (5, 3)")
+        insertMessage(6, text: nil, blob: body("who has the keys"), minutesAgo: 3, mine: false, handle: 3, chat: 5, read: true)
+    }
+
+    func testReadsAGroupByItsPeople() throws {
+        let out = try call("read_chat", ["chat": "+1 (555) 123-0002, 555-123-0001"])
+        XCTAssertEqual(messages(out).count, 1)
+        XCTAssertTrue(out.contains("Flat hunt"))
+    }
+
+    func testReadsAnUnnamedGroupByItsPeople() throws {
+        addUnnamedGroup()
+        XCTAssertTrue(try call("read_chat", ["chat": "landlord@example.com, +15551230002"]).contains("who has the keys"))
+    }
+
+    func testReadsAGroupByContactNames() throws {
+        addContacts()
+        XCTAssertEqual(messages(try call("read_chat", ["chat": "ben, Ana Ruiz"])).count, 1)
+    }
+
+    func testAPersonMoreOrLessIsADifferentGroup() {
+        addUnnamedGroup()
+        XCTAssertThrowsError(try call("read_chat", ["chat": "+15551230001, +15551230002, landlord@example.com"]))
+        XCTAssertThrowsError(try call("read_chat", ["chat": "+15551230001, landlord@example.com"]))
+    }
+
+    func testSendsStraightToAnExistingGroupNamedByItsPeople() throws {
+        try call("send_message", ["chat": "+15551230001, +15551230002", "text": "hi"])
+        XCTAssertEqual(bridge.sends.count, 1)
+        XCTAssertEqual(bridge.sends[0].target, "iMessage;+;chat777")
+        XCTAssertEqual(bridge.sends[0].mode, "chat")
+        XCTAssertTrue(bridge.composes.isEmpty)
+    }
+
+    func testNewGroupOpensADraftAndSaysItIsNotSent() throws {
+        server.composeWait = 0
+        let out = try call("send_message", ["chat": "+1 (555) 999-0001, new@example.com", "text": "dinner at 8?"])
+        XCTAssertTrue(bridge.sends.isEmpty)
+        XCTAssertEqual(bridge.composes.count, 1)
+        XCTAssertEqual(bridge.composes[0].recipients, ["+15559990001", "new@example.com"])
+        XCTAssertEqual(bridge.composes[0].text, "dinner at 8?")
+        XCTAssertTrue(out.hasPrefix("NOT SENT YET"))
+    }
+
+    func testNewGroupNeverUsesTheSendDialog() throws {
+        configure(["send": "confirm"])
+        server.composeWait = 0
+        try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"])
+        XCTAssertTrue(bridge.confirms.isEmpty)
+        XCTAssertEqual(bridge.composes.count, 1)
+    }
+
+    func testNewGroupReportsSentOnceTheUserPressesReturn() throws {
+        server.composeWait = 2
+        bridge.onCompose = { [self] in
+            execute("insert into chat values (9, 'iMessage;+;chat999', 43, 'chat999', null)")
+            insertMessage(7, text: nil, blob: body("dinner at 8?"), minutesAgo: 0, mine: true, handle: 0, chat: 9, read: true)
+            execute("update message set is_sent = 1, service = 'iMessage' where ROWID = 7")
+        }
+        let out = try call("send_message", ["chat": "+15559990001, new@example.com", "text": "dinner at 8?"])
+        XCTAssertTrue(out.contains("via iMessage (message 7, sent)"))
+        XCTAssertTrue(out.contains("conversation chat999"))
+    }
+
+    func testNewGroupFromContactNamesUsesTheNumberAlreadyTexted() throws {
+        addContacts()
+        server.composeWait = 0
+        try call("send_message", ["chat": "Ana, Dee", "text": "hi"])
+        XCTAssertEqual(bridge.composes[0].recipients, ["+15551230001", "+1 (555) 888-0001"])
+    }
+
+    func testNewGroupRefusesAPersonItCannotPin() {
+        addContacts()
+        for chat in ["Ana, Cy", "Ana, Nobody Atall", "Ana, +15551230001"] {
+            XCTAssertThrowsError(try call("send_message", ["chat": chat, "text": "hi"]), chat)
+        }
+        XCTAssertTrue(bridge.composes.isEmpty)
+    }
+
+    func testNewGroupRespectsOffAndTheAllowlist() {
+        configure(["send": "off"])
+        XCTAssertThrowsError(try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"]))
+        configure(["send": "allow", "allowed_chats": ["Flat hunt"]])
+        XCTAssertThrowsError(try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"]))
+        XCTAssertTrue(bridge.composes.isEmpty)
+    }
+
+    func testDraftThatFailsToOpenIsAnError() {
+        bridge.composeResult = .failed("no Messages")
+        XCTAssertThrowsError(try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"]))
+    }
+
+    func testComposeLinkEscapesPlusAndText() {
+        XCTAssertEqual(
+            LiveBridge.composeLink(recipients: ["+15559990001", "new@example.com"], text: "8pm? a&b"),
+            "imessage://open?addresses=%2B15559990001,new@example.com&body=8pm%3F%20a%26b")
+    }
+
+    // MARK: With the Accessibility permission
+
+    func sentGroupRow(_ text: String) {
+        execute("insert into chat values (9, 'iMessage;+;chat999', 43, 'chat999', null)")
+        insertMessage(7, text: nil, blob: body(text), minutesAgo: 0, mine: true, handle: 0, chat: 9, read: true)
+        execute("update message set is_sent = 1, service = 'iMessage' where ROWID = 7")
+    }
+
+    func testWithAccessibilityANewGroupIsSentForTheUser() throws {
+        bridge.accessibility = true
+        server.sendWait = 2
+        bridge.onCompose = { [self] in sentGroupRow("dinner at 8?") }
+        let out = try call("send_message", ["chat": "+15559990001, new@example.com", "text": "dinner at 8?"])
+        XCTAssertEqual(bridge.composes.count, 1)
+        XCTAssertTrue(bridge.composes[0].pressReturn)
+        XCTAssertTrue(out.contains("via iMessage (message 7, sent)."), out)
+        XCTAssertFalse(out.contains("pressed Return on the draft"))
+        XCTAssertTrue(out.contains("conversation chat999"))
+    }
+
+    func testWithAccessibilityTheSendDialogStillAsks() throws {
+        bridge.accessibility = true
+        configure(["send": "confirm"])
+        bridge.confirmAnswers = [.dontSend]
+        XCTAssertThrowsError(try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"]))
+        XCTAssertEqual(bridge.confirms.count, 1)
+        XCTAssertTrue(bridge.confirms[0].recipient.hasPrefix("new group ("))
+        XCTAssertTrue(bridge.composes.isEmpty)
+    }
+
+    func testAlwaysAllowOnANewGroupRemembersTheGroupOnceItExists() throws {
+        bridge.accessibility = true
+        configure(["send": "confirm"])
+        server.sendWait = 2
+        bridge.confirmAnswers = [.alwaysAllow]
+        bridge.onCompose = { [self] in sentGroupRow("hi") }
+        try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"])
+        XCTAssertEqual(try Config.load(configPath).alwaysAllowSend, ["chat999"])
+    }
+
+    func testWithAccessibilityAShellSendAsksInTheShell() throws {
+        bridge.accessibility = true
+        var asked: [String] = []
+        XCTAssertThrowsError(
+            try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"]) { _, recipient in
+                asked.append(recipient)
+                return false
+            })
+        XCTAssertEqual(asked.count, 1)
+        XCTAssertTrue(bridge.composes.isEmpty)
+    }
+
+    func testWhenTheKeypressIsNotSafeItLeavesTheDraftAndSaysWhy() throws {
+        bridge.accessibility = true
+        server.composeWait = 0
+        bridge.composeResult = .draft("the Messages window lost focus before Return could be pressed")
+        let out = try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"])
+        XCTAssertTrue(out.hasPrefix("NOT SENT YET"))
+        XCTAssertTrue(out.contains("lost focus"))
+        XCTAssertFalse(out.contains("Accessibility"))
+    }
+
+    func testWithoutAccessibilityTheDraftSaysHowToTurnItOn() throws {
+        server.composeWait = 0
+        let out = try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"])
+        XCTAssertFalse(bridge.composes[0].pressReturn)
+        XCTAssertTrue(out.contains("Privacy & Security > Accessibility"))
+    }
+
+    func testPressedButNotRecordedDoesNotClaimSent() throws {
+        bridge.accessibility = true
+        server.sendWait = 0
+        let out = try call("send_message", ["chat": "+15559990001, new@example.com", "text": "hi"])
+        XCTAssertTrue(out.contains("has not shown as sent yet"))
+    }
+
+    func testRecipientTokensMustMatchExactly() {
+        let tokens = ["Ana Ruiz, +15551230001", "new@example.com, Not registered"]
+        XCTAssertTrue(LiveBridge.tokensMatch(tokens, ["+1 (555) 123-0001", "new@example.com"]))
+        XCTAssertTrue(LiveBridge.tokensMatch(tokens.reversed(), ["+15551230001", "NEW@example.com"]))
+        XCTAssertFalse(LiveBridge.tokensMatch(tokens, ["+15551230001"]))
+        XCTAssertFalse(LiveBridge.tokensMatch(tokens, ["+15551230001", "other@example.com"]))
+        XCTAssertFalse(LiveBridge.tokensMatch(tokens + ["+15551230002"], ["+15551230001", "new@example.com"]))
+        XCTAssertFalse(LiveBridge.tokensMatch(["+15551230001", "+15551230001"], ["+15551230001", "new@example.com"]))
     }
 }

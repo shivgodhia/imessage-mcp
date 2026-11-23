@@ -10,7 +10,8 @@ struct ToolSpec {
 
 private let chatArgument =
     "Conversation: a chat identifier from list_chats, a phone number or email, "
-    + "or a contact or group name."
+    + "or a contact or group name. Several people separated by commas (names, numbers "
+    + "or emails) means the group conversation with exactly those people in it."
 
 private func property(_ type: String, _ description: String) -> [String: Any] {
     ["type": type, "description": description]
@@ -78,7 +79,11 @@ let toolSpecs: [ToolSpec] = [
         schema: object([
             "chat": property(
                 "string",
-                chatArgument + " A phone number or email with no existing conversation starts a new one."),
+                chatArgument + " A phone number or email with no existing conversation starts a new one. "
+                    + "Several people with no group yet start a new group: Messages opens a new "
+                    + "message to them with the text typed in, and iMessage MCP sends it if it has "
+                    + "the Accessibility permission. Otherwise the user presses Return to send it. "
+                    + "The result says which happened."),
             "text": property("string", "The message, exactly as it should be sent."),
         ], required: ["chat", "text"]),
         readOnly: false),

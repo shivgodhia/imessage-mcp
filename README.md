@@ -77,15 +77,37 @@ no arguments:
 | Tool | What it does |
 | --- | --- |
 | `list_chats` | Conversations, newest first, with contact names, unread counts and the last message. |
-| `read_chat` | Messages in one conversation, found by number, email, contact name or group name. |
+| `read_chat` | Messages in one conversation, found by number, email, contact name, group name, or the people in a group. |
 | `search_messages` | Text search, optionally within one conversation or the last N days. |
 | `new_messages` | Incoming messages since a cursor, for checking what arrived. |
-| `send_message` | Send a text to an existing conversation, or to a new number or email. Reports whether Messages recorded it as sent. |
+| `send_message` | Send a text to an existing conversation or group, or to a new number or email. Reports whether Messages recorded it as sent. |
 | `get_attachment` | Returns a photo as an image (HEIC is converted), or the file path for anything else. |
 
 SMS, RCS and iMessage threads with the same person appear as one conversation.
 
 It cannot mark messages as read, react, edit, unsend, or send attachments.
+
+### Group chats
+
+Groups work like any other conversation. Your agent can find one by its name, or
+by the people in it: "the group with Ana and Ben" finds the chat with exactly
+those two, which is how you reach a group that has no name.
+
+Messages lets another app send to a conversation that already exists, but not
+create a group. So when you ask your agent to text several people who are not in a
+group together yet, iMessage MCP opens a new message in the Messages app with
+the people and the text filled in.
+
+- **With the Accessibility permission** (System Settings > Privacy & Security >
+  Accessibility > iMessage MCP), it checks that the new message has exactly
+  those people and that text, presses Return, and switches back to the app you
+  were in. Messages comes to the front for a few seconds while this happens. You
+  approve the text first, the same way as any other send.
+- **Without it**, the new message waits in Messages and you press Return.
+
+macOS asks for Accessibility the first time your agent starts a group. After the
+first message the group exists and your agent sends to it directly, with no
+keypress.
 
 ## Who approves a text
 
@@ -145,6 +167,10 @@ can. The app only opens the Messages database, your Contacts databases (for
 names), and attachments you ask for. It opens them read-only and never
 connects to the network; the source is here to check.
 
+Accessibility is optional and also broad: it lets an app read and press keys
+in other apps. iMessage MCP only uses it to read the new-message window in
+Messages and press Return there, and only when starting a new group chat.
+
 The options file is not a barrier against other software running as you,
 which could edit it.
 
@@ -154,7 +180,8 @@ which could edit it.
 your AI app  ──stdin/stdout──▶  iMessage MCP.app
                                   ├─ reads ~/Library/Messages/chat.db (read-only)
                                   ├─ reads Contacts for names
-                                  └─ sends via AppleScript to Messages
+                                  ├─ sends via AppleScript to Messages
+                                  └─ new groups: presses Return in the Messages draft (Accessibility)
 ```
 
 Unlike a hosted connector, there is nothing on the internet here. Your AI app
